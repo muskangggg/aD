@@ -1,24 +1,33 @@
 """
-compute_risk_signal.py
+compute_risk_signal.py  (v2 -- early-warning health deficit)
 
 Builds the components of Risk Signal R = health deficit + volatility + utilization.
 
-Important scope note:
-  Only the VOLATILITY component can be computed from static historical
-  data (it just needs the price series). Health deficit and utilization
-  are properties of a specific borrowing position (collateral value,
-  debt value, liquidation threshold) at a specific point in time -- they
-  don't exist as a static number until the simulated environment (Step 5)
-  is actually stepping through simulated positions.
+What changed in v2 -- HEALTH DEFICIT IS NOW AN EARLY WARNING:
+  Before, health_deficit was 0 for every HF >= 1.0 and only became > 0
+  once HF < 1.0 -- i.e. at the moment of liquidation. That made the
+  biggest part of R (weight 0.5) REACTIVE: it gave no warning at all
+  before the position was already liquidatable.
 
-  So this file does two things:
-    1. Computes real historical price volatility from eth_daily.csv (usable now)
-    2. Defines the health_deficit / utilization / composite-R formulas as
-       reusable functions that the Gym environment will call at each
-       simulation step, once positions exist.
+  Now health_deficit starts rising as soon as HF drops below a warning
+  level (WARNING_HF = 1.5) and reaches 1.0 at the liquidation level
+  (HF = 1.0):
+        HF >= 1.5  -> 0.0   (safe)
+        HF  = 1.25 -> 0.5   (getting close)
+        HF <= 1.0  -> 1.0   (liquidatable)
+  This is what makes R a PROACTIVE signal (proposal Objective 2), and it
+  also lets R actually reach > 0.7 near liquidation, so the PER high-risk
+  boost (R > 0.7) is used.
+
+Scope note (unchanged):
+  Only the VOLATILITY component can be computed from static historical
+  data. Health deficit and utilization depend on a live position, so they
+  are computed inside the Gym environment at every step using the
+  functions below. The right-side live agent service must use the SAME
+  functions so the trained agent sees the same numbers.
 
 Usage:
-    python compute_risk_signal.py
+    python features/compute_risk_signal.py
 """
 
 import os
@@ -29,6 +38,9 @@ RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "processed")
 
 VOL_WINDOW_DAYS = 30  # rolling window for realized volatility
+
+WARNING_HF = 1.5       # health deficit starts rising below this HF
+LIQUIDATION_HF = 1.0   # health deficit reaches 1.0 here
 
 
 def load_price_data(path: str) -> pd.DataFrame:
@@ -53,17 +65,16 @@ def normalize_volatility(vol_series: pd.Series) -> pd.Series:
     return (vol_series - v_min) / (v_max - v_min)
 
 
-# ---- Functions used later by the Gym environment (Step 5) ----
-# These take live simulated position state, not static data, so they
-# aren't run here -- they're defined here so R's formula lives in one
-# place and the env just imports and calls them.
+# ---- Functions used by the Gym environment (and the live agent service) ----
 
-def compute_health_deficit(health_factor: float, target_hf: float = 1.0) -> float:
-    """How far below a safe health factor the position currently is.
-    0 = safe (HF >= target), approaches 1 as HF -> 0 (about to be liquidated)."""
-    if health_factor >= target_hf:
+def compute_health_deficit(health_factor: float,
+                           warning_hf: float = WARNING_HF,
+                           liquidation_hf: float = LIQUIDATION_HF) -> float:
+    """Early-warning distance to liquidation.
+    0 when HF >= warning_hf (safe), rises linearly to 1 at liquidation_hf."""
+    if health_factor >= warning_hf:
         return 0.0
-    return max(0.0, min(1.0, (target_hf - health_factor) / target_hf))
+    return float(np.clip((warning_hf - health_factor) / (warning_hf - liquidation_hf), 0.0, 1.0))
 
 
 def compute_utilization(total_debt_usd: float, total_collateral_usd: float) -> float:
@@ -80,8 +91,7 @@ def compute_risk_signal(
     weights: tuple[float, float, float] = (0.5, 0.25, 0.25),
 ) -> float:
     """Composite Risk Signal R, weighted sum of the three components.
-    Default weights favor health deficit as the dominant risk driver --
-    tune these once you're running ablations (Step 10)."""
+    Default weights favor health deficit as the dominant risk driver."""
     w_hd, w_vol, w_util = weights
     return w_hd * health_deficit + w_vol * volatility_norm + w_util * utilization
 
@@ -100,10 +110,10 @@ def main():
     print(f"Computed rolling {VOL_WINDOW_DAYS}-day volatility for {len(df)} days")
     print(f"  -> saved to {out_path}")
     print(f"  -> volatility range: {df['volatility'].min():.4f} to {df['volatility'].max():.4f} (annualized)")
-    print("\nNote: health_deficit and utilization components of R are computed")
-    print("live inside the Gym environment (Step 5) using compute_health_deficit()")
-    print("and compute_utilization() from this module -- they need simulated")
-    print("position state that doesn't exist as static data.")
+
+    print("\nHealth deficit (early warning) at different HF values:")
+    for hf in (2.0, 1.5, 1.4, 1.3, 1.2, 1.1, 1.0, 0.9):
+        print(f"  HF={hf:.1f} -> health_deficit={compute_health_deficit(hf):.2f}")
 
 
 if __name__ == "__main__":
