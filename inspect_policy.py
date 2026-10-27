@@ -2,7 +2,8 @@
 inspect_policy.py
 
 Diagnostic: load a trained model and watch what it actually does, with
-NO random exploration (epsilon = 0), on the TEST price split.
+NO random exploration (epsilon = 0), on the VALIDATION price split
+(use --split test only for the final write-up).
 
 Prints:
   1. A day-by-day trace of the first episode (action, valid?, HF, cash, debt)
@@ -11,7 +12,7 @@ Prints:
      and on which day the loan was fully repaid (if ever)
 
 Usage:
-    python inspect_policy.py                      # full_seed42, test split
+    python inspect_policy.py                      # full_seed42, validation split
     python inspect_policy.py --run r_only_seed42
     python inspect_policy.py --split train --episodes 50
 """
@@ -48,7 +49,7 @@ def action_name(a: int) -> str:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run", default="full_seed42")
-    p.add_argument("--split", default="test", choices=["train", "test"])
+    p.add_argument("--split", default="val", choices=["train", "val", "test"])
     p.add_argument("--episodes", type=int, default=20)
     p.add_argument("--trace-days", type=int, default=15)
     args = p.parse_args()
@@ -97,7 +98,7 @@ def main():
 
             done = terminated or truncated
 
-        liquidations.append(info["liquidated"])
+        liquidations.append(info["liquidation_count"] > 0)
         end_debts.append(info["debt_usd"])
         end_cash.append(info["wallet_usd"])
         end_wealth_chg.append(info["net_worth_usd"] - start_nw)

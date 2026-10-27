@@ -33,7 +33,12 @@ What changed in v3 (to match the thesis proposal, Sec 5.1):
   4. SAFETY CONSTRAINT: a borrow (or withdraw) that would push HF below 1.05
      is blocked (proposal Sec 5.1). Blocked actions count as invalid.
   5. AAVE-STYLE LIQUIDATION when HF < 1: a liquidator repays 50% of the debt
-     and takes that value + a 5% bonus from the collateral; the episode ends.
+     and takes that value + a 5% bonus from the collateral. Since v3.2 the
+     episode CONTINUES after a liquidation (Aave liquidations are partial),
+     so all strategies are valued on the same final day. Before v3.2 the
+     episode ended, which froze a liquidated user's net worth at an earlier,
+     higher ETH price and made liquidation look good in falling markets.
+     info["liquidation_count"] counts liquidations in the episode.
   6. INVALID ACTION PENALTY: a tiny penalty for actions that do nothing
      (e.g. deposit with an empty wallet), so the agent picks "hold" instead.
   7. ACTION MASK (v3.1): info["action_mask"] says which actions can do
@@ -129,7 +134,7 @@ class LendingEnv(gym.Env):
         seed: int | None = None,
         use_risk_signal: bool = True,
         use_credit_score: bool = True,
-        split: str = "train",   # "train" for training, "test" for evaluation
+        split: str = "train",   # "train" for training, "val" for tuning, "test" for final results
     ):
         super().__init__()
 
@@ -156,6 +161,7 @@ class LendingEnv(gym.Env):
         self.collateral = {a: 0.0 for a in ASSETS}
         self.debt = {a: 0.0 for a in ASSETS}
         self.credit_score = 0.5
+        self.liquidation_count = 0
 
     # ---------- value helpers ----------
     def _price(self, asset: str) -> float:
@@ -335,6 +341,7 @@ class LendingEnv(gym.Env):
 
         sampled_wallet = self.wallet_scores.sample(1, random_state=self.rng.integers(0, 1_000_000)).iloc[0]
         self.credit_score = float(sampled_wallet["credit_score"])
+        self.liquidation_count = 0
 
         return self._build_observation(), self._info()
 
@@ -363,11 +370,16 @@ class LendingEnv(gym.Env):
 
         liquidated = hf < 1.0 and debt_usd > EPS
         liquidation_loss_usd = self._liquidate() if liquidated else 0.0
+        self.liquidation_count += int(liquidated)
 
         wealth_change = interest_usd + liquidation_loss_usd   # the part actions control
         reward = self._compute_reward(wealth_change, liquidated, valid)
 
-        terminated = bool(liquidated)
+        # v3.2: a liquidation does NOT end the episode (Aave liquidations are
+        # partial -- the position lives on). The episode always runs to day 90,
+        # so every strategy's net worth is measured on the SAME final day.
+        # Only a fully wiped-out collateral ends it early.
+        terminated = bool(self._usd(self.collateral) <= EPS)
         truncated = bool(self.t >= EPISODE_LENGTH)
 
         info = self._info(
@@ -376,7 +388,8 @@ class LendingEnv(gym.Env):
             health_deficit=health_deficit,
             volatility_norm=volatility_norm,
             utilization=utilization,
-            liquidated=liquidated,
+            liquidated=liquidated,                 # liquidated on THIS step
+            liquidation_count=self.liquidation_count,  # liquidations so far this episode
             invalid_action=not valid,
             interest_usd=interest_usd,
             liquidation_loss_usd=liquidation_loss_usd,
@@ -416,7 +429,7 @@ def _run(env, policy_fn, label, reset=True):
         if terminated or truncated:
             break
     price_chg = (env._price("ETH") / start_price - 1) * 100
-    print(f"[{label}] days={env.t:2d} liquidated={str(info['liquidated']):5s} "
+    print(f"[{label}] days={env.t:2d} liquidations={info['liquidation_count']} "
           f"N: {start_nw:.0f}->{info['net_worth_usd']:.0f} (ETH {price_chg:+.1f}%) "
           f"controllable={controllable:+.2f} min_HF={min_hf:.2f} invalid={invalid} reward={total_reward:.2f}")
 
@@ -439,11 +452,13 @@ def main():
     print("   -> min_HF should be >= 1.05 at the moment of borrowing; later blocked borrows count as invalid")
 
     # Check 3: forced crash -- ETH falls 60% in 90 days, static user gets liquidated
+    # (the episode now continues to day 90 after a liquidation)
     env.reset()
     p0 = env.start_price
     env.price_path = np.linspace(p0, p0 * 0.4, len(env.price_path))
     _run(env, lambda i: HOLD_ACTION, "crash    ", reset=False)
-    print(f"   -> should liquidate; loss = {LIQUIDATION_BONUS:.0%} bonus on {CLOSE_FACTOR:.0%} of the debt, reward includes -{BETA}")
+    print(f"   -> should liquidate (>=1) and still run to day 90; each liquidation costs a "
+          f"{LIQUIDATION_BONUS:.0%} bonus on {CLOSE_FACTOR:.0%} of the debt and -{BETA} reward")
 
     # Check 4: action mask matches what actually happens
     mismatches = 0

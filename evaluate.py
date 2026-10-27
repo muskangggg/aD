@@ -14,7 +14,8 @@ Trained DQN runs are added with --runs, e.g. full_seed42 r_only_seed42.
 
 Metrics (per episode, then averaged):
   - N_end          : user net worth at episode end (primary metric)
-  - liq_rate       : share of episodes ending in liquidation
+  - liq_rate       : share of episodes with at least one liquidation
+  - liq_count      : average number of liquidations per episode
   - risk_adj       : N_end / (1 + liquidation_count)
   - proactive      : of high-risk steps (R > SAFE_RISK_THRESHOLD), share where a
                      deposit or repay was made that actually worked
@@ -23,9 +24,10 @@ Metrics (per episode, then averaged):
   - invalid        : share of actions that did nothing
 
 Usage:
-    python evaluate.py                                  # baselines only
-    python evaluate.py --runs full_seed42               # + a trained model
+    python evaluate.py                                  # baselines only, VALIDATION split
+    python evaluate.py --runs full_seed42               # + a trained model (validation)
     python evaluate.py --runs full_seed42 none_seed42 --episodes 300
+    python evaluate.py --runs ... --split test          # FINAL results only, run once
 Results are also saved to results/eval_<split>.csv
 """
 
@@ -93,13 +95,14 @@ def evaluate(name, policy, use_r, use_cs, split, episodes):
                 high_risk += 1
                 proactive += int(is_de_risking(a) and not info["invalid_action"])
             done = terminated or truncated
-        liq = bool(info["liquidated"])
+        liq_count = int(info["liquidation_count"])
         n_end = info["net_worth_usd"]
         rows.append({
             "strategy": name,
             "N_end": n_end,
-            "liquidated": liq,
-            "risk_adj": n_end / (1 + int(liq)),
+            "liquidated": liq_count > 0,
+            "liq_count": liq_count,
+            "risk_adj": n_end / (1 + liq_count),
             "proactive": proactive / high_risk if high_risk else np.nan,
             "ctrl_gain": ctrl,
             "invalid": invalid / steps,
@@ -110,7 +113,8 @@ def evaluate(name, policy, use_r, use_cs, split, episodes):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--runs", nargs="*", default=[], help="trained run names, e.g. full_seed42")
-    p.add_argument("--split", default="test", choices=["train", "test"])
+    p.add_argument("--split", default="val", choices=["train", "val", "test"],
+                   help="val (default) for tuning; test ONLY for the final results")
     p.add_argument("--episodes", type=int, default=200)
     args = p.parse_args()
 
@@ -127,6 +131,8 @@ def main():
         use_r, use_cs = VARIANT_FLAGS[run.rsplit("_seed", 1)[0]]
         strategies.append((run, make_dqn_policy(run, n_obs, n_actions), use_r, use_cs))
 
+    if args.split == "test":
+        print("!!! TEST split: use this only for the FINAL results, not for tuning !!!\n")
     print(f"=== Evaluation on {args.split.upper()} split, {args.episodes} episodes each, "
           f"same price paths for every strategy ===\n")
     results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes)
@@ -135,11 +141,12 @@ def main():
     order = [s[0] for s in strategies]
     table = (results.groupby("strategy", sort=False)
              .agg(N_end=("N_end", "mean"), liq_rate=("liquidated", "mean"),
+                  liq_count=("liq_count", "mean"),
                   risk_adj=("risk_adj", "mean"), proactive=("proactive", "mean"),
                   ctrl_gain=("ctrl_gain", "mean"), invalid=("invalid", "mean"))
              .reindex(order))
     pd.set_option("display.width", 120)
-    print(table.round({"N_end": 1, "liq_rate": 3, "risk_adj": 1, "proactive": 3,
+    print(table.round({"N_end": 1, "liq_rate": 3, "liq_count": 2, "risk_adj": 1, "proactive": 3,
                        "ctrl_gain": 2, "invalid": 3}).to_string())
 
     os.makedirs(RESULTS_DIR, exist_ok=True)

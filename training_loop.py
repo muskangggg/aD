@@ -25,7 +25,8 @@ Per-episode metrics (the proposal's 4, plus helpers):
   - net_worth_end           : N_user at episode end (primary metric)
   - net_wealth_change       : N_user end - start (includes the ETH price move)
   - controllable_gain       : interest + liquidation loss (the part actions control)
-  - liquidated              : did the episode end in liquidation
+  - liquidated              : at least one liquidation in the episode
+                              (v3.2: a liquidation no longer ends the episode)
   - risk_adjusted_return    : N_user / (1 + liquidation_count)   (proposal Sec 5.4)
   - proactive_response_rate : of the steps where risk_signal was elevated
                                (> SAFE_RISK_THRESHOLD), the fraction where the
@@ -86,7 +87,7 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
     proactive_steps = 0
     invalid_steps = 0
     controllable_gain = 0.0
-    liquidated = False
+    liq_count = 0
     end_net_worth = start_net_worth
 
     done = False
@@ -110,7 +111,7 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
             if is_de_risking_action(action) and not info["invalid_action"]:
                 proactive_steps += 1
 
-        liquidated = info["liquidated"]
+        liq_count = info["liquidation_count"]   # liquidations so far (episode no longer ends at one)
         end_net_worth = info["net_worth_usd"]
 
         obs = next_obs
@@ -121,11 +122,12 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
     return {
         "total_reward": total_reward,
         "episode_length": len(episode_rewards),
-        "liquidated": liquidated,
+        "liquidated": liq_count > 0,                           # at least one liquidation
+        "liquidation_count": liq_count,
         "net_worth_end": end_net_worth,                        # N_user (primary metric)
         "net_wealth_change": end_net_worth - start_net_worth,  # includes the ETH price move
         "controllable_gain": controllable_gain,                # interest + liquidation loss only
-        "risk_adjusted_return": end_net_worth / (1 + int(liquidated)),  # proposal: N_user / (1 + liquidations)
+        "risk_adjusted_return": end_net_worth / (1 + liq_count),  # proposal: N_user / (1 + liquidation_count)
         "proactive_response_rate": (proactive_steps / elevated_risk_steps) if elevated_risk_steps > 0 else None,
         "invalid_action_rate": invalid_steps / len(episode_rewards),
         "epsilon": agent.epsilon,

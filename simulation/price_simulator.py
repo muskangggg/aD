@@ -1,5 +1,14 @@
 """
-price_simulator.py  (v2 -- Step 2: train/test split)
+price_simulator.py  (v3 -- train / validation / test split)
+
+v3.1: GBM uses zero drift by default (see GBM_ZERO_DRIFT).
+v3: added a VALIDATION split for tuning. Splits by time:
+    - "train": first 70% of days   -> training
+    - "val"  : next 10% of days    -> tuning (gamma, alpha, beta, ...)
+    - "test" : last 20% of days    -> final results only, used ONCE
+  The test period is unchanged from v2. GBM is calibrated on train only.
+
+--- v2 notes below ---
 
 Builds the "Simulated / Backtest Env" price source: each episode gets a
 price path that's either (a) a real historical window sampled from actual
@@ -36,35 +45,47 @@ RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 
 MIX_REAL_PROB = 0.7          # probability an episode uses a real historical window vs. GBM
 DEFAULT_EPISODE_LENGTH = 90  # days per episode
-TRAIN_FRAC = 0.8             # first 80% of days = train, last 20% = test
+TRAIN_FRAC = 0.7             # first 70% of days = train
+VAL_FRAC = 0.1               # next 10% = validation (tuning); last 20% = test
+SPLITS = ("train", "val", "test", "all")
+# GBM drift: the train period happened to be a rising market (~+18%/yr).
+# Copying that drift teaches the agent that "ETH goes up, borrowing is safe".
+# With GBM_ZERO_DRIFT the synthetic paths have zero expected price change
+# (volatility is still calibrated on train), so they don't assume a direction.
+GBM_ZERO_DRIFT = True
 
 
 class PriceSimulator:
     def __init__(self, price_csv_path: str, seed: int | None = None,
-                 split: str = "train", train_frac: float = TRAIN_FRAC):
-        if split not in ("train", "test", "all"):
-            raise ValueError(f"split must be 'train', 'test' or 'all', got {split!r}")
+                 split: str = "train", train_frac: float = TRAIN_FRAC, val_frac: float = VAL_FRAC):
+        if split not in SPLITS:
+            raise ValueError(f"split must be one of {SPLITS}, got {split!r}")
 
         df = pd.read_csv(price_csv_path, parse_dates=["date"]).sort_values("date").reset_index(drop=True)
         all_prices = df["close"].values
-        split_idx = int(len(all_prices) * train_frac)
+        all_dates = df["date"].values
+        n = len(all_prices)
+        train_end = int(round(n * train_frac))
+        val_end = int(round(n * (train_frac + val_frac)))  # round() avoids 0.7+0.1=0.7999.. shifting the test start
+
+        bounds = {
+            "train": (0, train_end),
+            "val": (train_end, val_end),
+            "test": (val_end, n),
+            "all": (0, n),  # old behaviour, kept only for comparison
+        }
+        start, end = bounds[split]
 
         self.split = split
-        self.train_prices = all_prices[:split_idx]
-        if split == "train":
-            self.prices = all_prices[:split_idx]
-            self.dates = df["date"].values[:split_idx]
-        elif split == "test":
-            self.prices = all_prices[split_idx:]
-            self.dates = df["date"].values[split_idx:]
-        else:  # "all" -- old behaviour, kept only for comparison
-            self.prices = all_prices
-            self.dates = df["date"].values
+        self.train_prices = all_prices[:train_end]
+        self.prices = all_prices[start:end]
+        self.dates = all_dates[start:end]
 
         self.rng = np.random.default_rng(seed)
 
         # GBM is always calibrated on TRAIN data only (no test leakage)
-        self.mu_daily, self.sigma_daily = self._calibrate_gbm(self.train_prices)
+        self.calibrated_mu_daily, self.sigma_daily = self._calibrate_gbm(self.train_prices)
+        self.mu_daily = 0.0 if GBM_ZERO_DRIFT else self.calibrated_mu_daily
 
     @staticmethod
     def _calibrate_gbm(prices: np.ndarray) -> tuple[float, float]:
@@ -108,13 +129,13 @@ class PriceSimulator:
 def main():
     price_path = os.path.join(RAW_DIR, "eth_daily.csv")
 
-    for split in ("train", "test"):
+    for split in ("train", "val", "test"):
         sim = PriceSimulator(price_path, seed=42, split=split)
         print(f"=== {split.upper()} split ===")
         print(f"  days in split:   {len(sim.prices)}")
         print(f"  date range:      {str(sim.dates[0])[:10]} to {str(sim.dates[-1])[:10]}")
-        print(f"  GBM (train-calibrated) annualized drift: {sim.mu_daily * 365:.4f}, "
-              f"volatility: {sim.sigma_daily * np.sqrt(365):.4f}")
+        print(f"  GBM volatility (train-calibrated): {sim.sigma_daily * np.sqrt(365):.4f}, "
+              f"drift used: {sim.mu_daily * 365:.4f} (train drift was {sim.calibrated_mu_daily * 365:.4f})")
         print(f"  3 sample episodes (length={DEFAULT_EPISODE_LENGTH} days):")
         for i in range(3):
             path = sim.get_episode_path()
