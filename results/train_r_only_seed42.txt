@@ -1,0 +1,65 @@
+=== Training run: r_only_seed42 (R=on, CS=off, buffer_penalty=0, episodes=1000, split=train) ===
+ep   20 | eps=0.917 | target=off | avg_reward=  39.419 | liq_rate=0.05 | avg_wealth_chg=   78.63 | ctrl_gain=  4.19 | proactive=0.63 | danger_days=0.08 | invalid=0.00
+ep   40 | eps=0.832 | target=off | avg_reward=  39.473 | liq_rate=0.00 | avg_wealth_chg= -106.99 | ctrl_gain=  3.95 | proactive=0.70 | danger_days=0.07 | invalid=0.00
+ep   60 | eps=0.746 | target=off | avg_reward=  48.190 | liq_rate=0.05 | avg_wealth_chg=  210.53 | ctrl_gain=  5.07 | proactive=0.55 | danger_days=0.17 | invalid=0.00
+ep   80 | eps=0.661 | target=off | avg_reward=  26.944 | liq_rate=0.10 | avg_wealth_chg=   12.42 | ctrl_gain=  3.19 | proactive=0.66 | danger_days=0.10 | invalid=0.00
+ep  100 | eps=0.575 | target=off | avg_reward=  36.390 | liq_rate=0.05 | avg_wealth_chg=  190.62 | ctrl_gain=  3.89 | proactive=0.55 | danger_days=0.07 | invalid=0.00
+ep  120 | eps=0.490 | target=off | avg_reward=  63.632 | liq_rate=0.00 | avg_wealth_chg=   60.51 | ctrl_gain=  6.36 | proactive=0.49 | danger_days=0.19 | invalid=0.00
+ep  140 | eps=0.404 | target=off | avg_reward=  41.554 | liq_rate=0.05 | avg_wealth_chg=   58.47 | ctrl_gain=  4.41 | proactive=0.54 | danger_days=0.16 | invalid=0.00
+ep  160 | eps=0.319 | target=off | avg_reward=  64.455 | liq_rate=0.00 | avg_wealth_chg=  102.38 | ctrl_gain=  6.45 | proactive=0.57 | danger_days=0.13 | invalid=0.00
+[DQNAgent] epsilon=0.300 < 0.3 -> target network activated
+ep  180 | eps=0.233 | target=on  | avg_reward=  -0.137 | liq_rate=0.15 | avg_wealth_chg=  -21.61 | ctrl_gain=  0.99 | proactive=0.47 | danger_days=0.14 | invalid=0.00
+ep  200 | eps=0.148 | target=on  | avg_reward=  64.627 | liq_rate=0.00 | avg_wealth_chg=  123.99 | ctrl_gain=  6.46 | proactive=0.57 | danger_days=0.04 | invalid=0.00
+ep  220 | eps=0.062 | target=on  | avg_reward=  56.304 | liq_rate=0.00 | avg_wealth_chg=   38.93 | ctrl_gain=  5.63 | proactive=0.52 | danger_days=0.01 | invalid=0.00
+ep  240 | eps=0.050 | target=on  | avg_reward=  57.331 | liq_rate=0.00 | avg_wealth_chg=    8.08 | ctrl_gain=  5.73 | proactive=0.33 | danger_days=0.02 | invalid=0.00
+ep  260 | eps=0.050 | target=on  | avg_reward=  40.714 | liq_rate=0.05 | avg_wealth_chg=   11.27 | ctrl_gain=  4.32 | proactive=0.46 | danger_days=0.03 | invalid=0.00
+ep  280 | eps=0.050 | target=on  | avg_reward=  59.596 | liq_rate=0.00 | avg_wealth_chg=   47.33 | ctrl_gain=  5.96 | proactive=0.30 | danger_days=0.05 | invalid=0.00
+ep  300 | eps=0.050 | target=on  | avg_reward=  60.506 | liq_rate=0.00 | avg_wealth_chg=  231.44 | ctrl_gain=  6.05 | proactive=0.41 | danger_days=0.09 | invalid=0.00
+ep  320 | eps=0.050 | target=on  | avg_reward=  49.835 | liq_rate=0.00 | avg_wealth_chg=   -5.05 | ctrl_gain=  4.98 | proactive=0.42 | danger_days=0.18 | invalid=0.00
+ep  340 | eps=0.050 | target=on  | avg_reward=  52.409 | liq_rate=0.00 | avg_wealth_chg=   27.98 | ctrl_gain=  5.24 | proactive=0.27 | danger_days=0.20 | invalid=0.00
+ep  360 | eps=0.050 | target=on  | avg_reward=  37.270 | liq_rate=0.05 | avg_wealth_chg=  137.54 | ctrl_gain=  3.98 | proactive=0.37 | danger_days=0.14 | invalid=0.00
+ep  380 | eps=0.050 | target=on  | avg_reward=  41.266 | liq_rate=0.00 | avg_wealth_chg=  -10.67 | ctrl_gain=  4.13 | proactive=0.58 | danger_days=0.10 | invalid=0.00
+ep  400 | eps=0.050 | target=on  | avg_reward=  28.958 | liq_rate=0.05 | avg_wealth_chg=  116.71 | ctrl_gain=  3.15 | proactive=0.42 | danger_days=0.07 | invalid=0.00
+ep  420 | eps=0.050 | target=on  | avg_reward=  43.216 | liq_rate=0.00 | avg_wealth_chg=   54.82 | ctrl_gain=  4.32 | proactive=0.74 | danger_days=0.06 | invalid=0.00
+ep  440 | eps=0.050 | target=on  | avg_reward=  45.561 | liq_rate=0.00 | avg_wealth_chg=   87.16 | ctrl_gain=  4.56 | proactive=0.51 | danger_days=0.04 | invalid=0.00
+ep  460 | eps=0.050 | target=on  | avg_reward=  52.396 | liq_rate=0.00 | avg_wealth_chg=  177.87 | ctrl_gain=  5.24 | proactive=0.58 | danger_days=0.07 | invalid=0.00
+ep  480 | eps=0.050 | target=on  | avg_reward=  50.514 | liq_rate=0.00 | avg_wealth_chg=  162.43 | ctrl_gain=  5.05 | proactive=0.66 | danger_days=0.02 | invalid=0.00
+ep  500 | eps=0.050 | target=on  | avg_reward=  -9.372 | liq_rate=0.10 | avg_wealth_chg=   44.28 | ctrl_gain= -0.44 | proactive=0.45 | danger_days=0.16 | invalid=0.00
+ep  520 | eps=0.050 | target=on  | avg_reward=   3.997 | liq_rate=0.10 | avg_wealth_chg=  182.98 | ctrl_gain=  0.90 | proactive=0.47 | danger_days=0.24 | invalid=0.00
+ep  540 | eps=0.050 | target=on  | avg_reward=   5.443 | liq_rate=0.05 | avg_wealth_chg= -108.48 | ctrl_gain=  0.79 | proactive=0.52 | danger_days=0.10 | invalid=0.00
+ep  560 | eps=0.050 | target=on  | avg_reward=  68.331 | liq_rate=0.00 | avg_wealth_chg=  138.12 | ctrl_gain=  6.83 | proactive=0.23 | danger_days=0.14 | invalid=0.00
+ep  580 | eps=0.050 | target=on  | avg_reward=  34.744 | liq_rate=0.10 | avg_wealth_chg=   93.25 | ctrl_gain=  3.97 | proactive=0.31 | danger_days=0.17 | invalid=0.00
+ep  600 | eps=0.050 | target=on  | avg_reward=  41.831 | liq_rate=0.05 | avg_wealth_chg=  114.33 | ctrl_gain=  4.43 | proactive=0.26 | danger_days=0.09 | invalid=0.00
+ep  620 | eps=0.050 | target=on  | avg_reward=  63.954 | liq_rate=0.00 | avg_wealth_chg=  157.31 | ctrl_gain=  6.40 | proactive=0.47 | danger_days=0.10 | invalid=0.00
+ep  640 | eps=0.050 | target=on  | avg_reward=  60.548 | liq_rate=0.00 | avg_wealth_chg=  240.81 | ctrl_gain=  6.05 | proactive=0.54 | danger_days=0.10 | invalid=0.00
+ep  660 | eps=0.050 | target=on  | avg_reward=  41.762 | liq_rate=0.05 | avg_wealth_chg=  109.44 | ctrl_gain=  4.43 | proactive=0.49 | danger_days=0.09 | invalid=0.00
+ep  680 | eps=0.050 | target=on  | avg_reward=  52.933 | liq_rate=0.00 | avg_wealth_chg=  170.38 | ctrl_gain=  5.29 | proactive=0.41 | danger_days=0.11 | invalid=0.00
+ep  700 | eps=0.050 | target=on  | avg_reward=  57.274 | liq_rate=0.00 | avg_wealth_chg=  226.33 | ctrl_gain=  5.73 | proactive=0.55 | danger_days=0.03 | invalid=0.00
+ep  720 | eps=0.050 | target=on  | avg_reward=  39.601 | liq_rate=0.05 | avg_wealth_chg=  238.69 | ctrl_gain=  4.46 | proactive=0.52 | danger_days=0.05 | invalid=0.00
+ep  740 | eps=0.050 | target=on  | avg_reward=  55.264 | liq_rate=0.00 | avg_wealth_chg=   60.40 | ctrl_gain=  5.53 | proactive=0.46 | danger_days=0.07 | invalid=0.00
+ep  760 | eps=0.050 | target=on  | avg_reward=  60.392 | liq_rate=0.00 | avg_wealth_chg=   18.23 | ctrl_gain=  6.04 | proactive=0.57 | danger_days=0.07 | invalid=0.00
+ep  780 | eps=0.050 | target=on  | avg_reward=  58.096 | liq_rate=0.00 | avg_wealth_chg=  208.32 | ctrl_gain=  5.81 | proactive=0.56 | danger_days=0.09 | invalid=0.00
+ep  800 | eps=0.050 | target=on  | avg_reward=  56.706 | liq_rate=0.00 | avg_wealth_chg=  192.21 | ctrl_gain=  5.67 | proactive=0.83 | danger_days=0.01 | invalid=0.00
+ep  820 | eps=0.050 | target=on  | avg_reward=  58.549 | liq_rate=0.00 | avg_wealth_chg=  265.18 | ctrl_gain=  5.85 | proactive=0.67 | danger_days=0.08 | invalid=0.00
+ep  840 | eps=0.050 | target=on  | avg_reward=  59.183 | liq_rate=0.00 | avg_wealth_chg=  157.18 | ctrl_gain=  5.92 | proactive=0.68 | danger_days=0.10 | invalid=0.00
+ep  860 | eps=0.050 | target=on  | avg_reward=  62.043 | liq_rate=0.00 | avg_wealth_chg=   63.78 | ctrl_gain=  6.20 | proactive=0.70 | danger_days=0.04 | invalid=0.00
+ep  880 | eps=0.050 | target=on  | avg_reward=  57.943 | liq_rate=0.00 | avg_wealth_chg=  146.88 | ctrl_gain=  5.79 | proactive=0.78 | danger_days=0.05 | invalid=0.00
+ep  900 | eps=0.050 | target=on  | avg_reward=  64.300 | liq_rate=0.00 | avg_wealth_chg=  239.53 | ctrl_gain=  6.43 | proactive=0.54 | danger_days=0.07 | invalid=0.00
+ep  920 | eps=0.050 | target=on  | avg_reward=  46.375 | liq_rate=0.05 | avg_wealth_chg=  167.31 | ctrl_gain=  4.89 | proactive=0.55 | danger_days=0.10 | invalid=0.00
+ep  940 | eps=0.050 | target=on  | avg_reward=  63.828 | liq_rate=0.00 | avg_wealth_chg=  132.08 | ctrl_gain=  6.38 | proactive=0.65 | danger_days=0.07 | invalid=0.00
+ep  960 | eps=0.050 | target=on  | avg_reward=  66.178 | liq_rate=0.00 | avg_wealth_chg=   89.97 | ctrl_gain=  6.62 | proactive=0.66 | danger_days=0.05 | invalid=0.00
+ep  980 | eps=0.050 | target=on  | avg_reward=  64.505 | liq_rate=0.00 | avg_wealth_chg=  176.60 | ctrl_gain=  6.45 | proactive=0.68 | danger_days=0.09 | invalid=0.00
+ep 1000 | eps=0.050 | target=on  | avg_reward=  34.249 | liq_rate=0.05 | avg_wealth_chg=  -81.91 | ctrl_gain=  3.67 | proactive=0.67 | danger_days=0.10 | invalid=0.00
+
+Saved log: C:\Users\user\OneDrive\Desktop\auto_defi\logs\r_only_seed42.csv
+Final checkpoint: C:\Users\user\OneDrive\Desktop\auto_defi\checkpoints\r_only_seed42\final.pt
+
+Last 100 episodes:
+  liquidation rate:      0.020
+  avg reward:            55.027
+  avg net wealth change: 96.81
+  avg controllable gain: 5.60
+  avg risk-adj. return:  1083.34
+  avg proactive rate:    0.643
+  avg invalid rate:      0.000
+  danger days (HF<1.15):  0.080

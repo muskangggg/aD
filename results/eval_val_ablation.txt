@@ -1,0 +1,46 @@
+=== Evaluation on VAL split, 300 episodes each, same price paths for every strategy ===
+
+TABLE 1 - main results
+                   N_end  liq_rate  liq_count  risk_adj  ctrl_gain  invalid
+strategy                                                                   
+static             783.4     0.030       0.04     775.7       6.48    0.000
+heuristic          784.3     0.000       0.00     784.3       7.23    0.000
+random             782.7     0.163       0.21     718.3       0.70    0.188
+borrow_all         895.6     1.000       4.64     172.7     -29.85    0.949
+full_seed42_lr1e4  781.8     0.000       0.00     781.8       4.66    0.000
+full_seed1_lr1e4   779.7     0.000       0.00     779.7       2.58    0.000
+full_seed2_lr1e4   783.5     0.000       0.00     783.5       6.32    0.000
+r_only_seed42      783.5     0.000       0.00     783.5       6.46    0.000
+r_only_seed1       783.4     0.000       0.00     783.4       6.27    0.000
+r_only_seed2       783.2     0.000       0.00     783.2       6.12    0.000
+cs_only_seed42     783.6     0.010       0.01     779.4       7.08    0.000
+cs_only_seed1      780.6     0.127       0.13     741.0       4.67    0.000
+cs_only_seed2      782.5     0.080       0.08     757.3       6.70    0.000
+none_seed42        783.5     0.000       0.00     783.5       6.41    0.000
+none_seed1         784.5     0.000       0.00     784.5       7.37    0.000
+none_seed2         784.3     0.000       0.00     784.3       7.19    0.000
+
+TABLE 2 - behaviour (high risk = R > 0.5, risk measured before acting)
+                   proactive  normal  pro_gap  high_risk  hf_lt_1.1  int_earned  int_paid  end_debt  idle_eth
+strategy                                                                                                     
+static                 0.000   0.000    0.000      0.076      0.004        9.77      2.96     396.0       0.0
+heuristic              0.104   0.000    0.104      0.097      0.003       10.83      3.60     440.0       0.0
+random                 0.389   0.353    0.036      0.282      0.069        7.99      3.85     509.0     214.0
+borrow_all             0.000   0.000    0.000      0.896      0.310       12.75      2.64      60.0       0.0
+full_seed42_lr1e4      0.778   0.542    0.236      0.057      0.001       10.22      5.56     790.0      17.0
+full_seed1_lr1e4       0.555   0.542    0.012      0.257      0.051       10.17      7.59    1251.0      51.0
+full_seed2_lr1e4       0.328   0.271    0.057      0.158      0.006       10.97      4.65     464.0      13.0
+r_only_seed42          0.546   0.124    0.422      0.135      0.005       10.36      3.90     465.0       7.0
+r_only_seed1           0.236   0.248   -0.012      0.541      0.028       12.18      5.91     848.0       7.0
+r_only_seed2           0.835   0.438    0.396      0.068      0.005        9.43      3.32     395.0      71.0
+cs_only_seed42         0.737   0.139    0.599      0.551      0.056       12.26      5.02     561.0      14.0
+cs_only_seed1          0.222   0.008    0.214      0.058      0.004        9.49      3.02     404.0      17.0
+cs_only_seed2          0.631   0.125    0.506      0.534      0.021       12.30      4.60     531.0       3.0
+none_seed42            0.835   0.448    0.387      0.032      0.000        9.35      2.94     392.0      61.0
+none_seed1             0.150   0.073    0.078      0.139      0.004       11.29      3.91     458.0       5.0
+none_seed2             0.311   0.059    0.252      0.180      0.001       11.68      4.49     439.0       0.0
+
+How to read: pro_gap > 0 means it de-risks MORE when risk is high (real reaction to risk).
+ctrl_gain = int_earned - int_paid + liquidation loss.
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\eval_val.csv
