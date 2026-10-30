@@ -1,13 +1,31 @@
 """
-training_loop.py  (v2)
+training_loop.py  (v3.1)
 
 Step 8: the training loop, on top of Step 7's DQNAgent.
 
+What changed in v3.1:
+  - --buffer-penalty X turns on the env's HF danger-zone penalty (lending_env
+    v3.3, Step 2b experiment). The run name gets "_buf<X>" at the end, e.g.
+    full_seed42_buf1, so it never overwrites runs without the penalty.
+    evaluate.py / inspect_policy.py read these names without changes.
+  - New log column danger_days_share: share of days with HF < HF_BUFFER (1.15).
+
+What changed in v3:
+  - TIME-LIMIT FIX (Pardo et al., 2018, "Time Limits in Reinforcement
+    Learning"): day 90 is only where we STOP WATCHING (truncated), not a
+    real end of the loan. Before v3 the agent was told "no future after
+    day 90". The agent cannot see the day number, so the SAME situation got
+    "the future matters" on most days and "no future" on day 90 --
+    contradictory teaching. Now only `terminated` (collateral wiped out)
+    stops the future value in the learning target. The episode still ends
+    at day 90 as before.
+  - "proactive" in the log now measures risk BEFORE the action (the state
+    the agent saw when it chose), the same way evaluate.py v2 does.
+
 What changed in v2:
-  - Trains on the TRAIN price split only (Step 2) -- test data is kept
-    for evaluation.
+  - Trains on the TRAIN price split only -- val/test are kept for evaluation.
   - Command-line options choose the model variant and seed, so the same
-    file trains all 4 ablation models (Step 10):
+    file trains all 4 ablation models:
         python training_loop.py                    -> full   (R + CS)
         python training_loop.py --no-cs            -> r_only
         python training_loop.py --no-r             -> cs_only
@@ -16,21 +34,18 @@ What changed in v2:
   - Each run saves to its own files, e.g.
         logs/full_seed42.csv
         checkpoints/full_seed42/ep100.pt ... final.pt
-  - Also logs invalid_action_rate (actions that couldn't do anything,
-    e.g. deposit with an empty wallet, or a borrow blocked by HF >= 1.05).
-  - v3: works with lending_env v3 (proposal reward). The "no R" variant
-    also loses R's replay boost (PER), so the ablation is clean.
+  - Logs invalid_action_rate. The "no R" variant also loses R's replay
+    boost (PER), so the ablation is clean.
 
 Per-episode metrics (the proposal's 4, plus helpers):
   - net_worth_end           : N_user at episode end (primary metric)
   - net_wealth_change       : N_user end - start (includes the ETH price move)
   - controllable_gain       : interest + liquidation loss (the part actions control)
   - liquidated              : at least one liquidation in the episode
-                              (v3.2: a liquidation no longer ends the episode)
   - risk_adjusted_return    : N_user / (1 + liquidation_count)   (proposal Sec 5.4)
-  - proactive_response_rate : of the steps where risk_signal was elevated
-                               (> SAFE_RISK_THRESHOLD), the fraction where the
-                               agent made a deposit or repay THAT ACTUALLY WORKED
+  - proactive_response_rate : of the steps where R (before acting) was
+                              > SAFE_RISK_THRESHOLD, the fraction where the
+                              agent made a deposit or repay THAT ACTUALLY WORKED
 
 Usage:
     python training_loop.py [--no-r] [--no-cs] [--seed N] [--episodes N]
@@ -46,7 +61,9 @@ import torch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "env"))
 
-from lending_env import LendingEnv, ACTION_TYPES, HOLD_ACTION, SAFE_RISK_THRESHOLD  # noqa: E402
+from lending_env import (  # noqa: E402
+    LendingEnv, ACTION_TYPES, HOLD_ACTION, SAFE_RISK_THRESHOLD, HF_BUFFER, compute_risk_signal,
+)
 from dqn_agent import DQNAgent  # noqa: E402
 
 # ---- Training config (not specified by the proposal -- tune as needed) ----
@@ -76,9 +93,15 @@ def is_de_risking_action(action: int) -> bool:
     return ACTION_TYPES[action % len(ACTION_TYPES)] in DE_RISKING_ACTION_TYPES
 
 
+def risk_before_action(env: LendingEnv) -> float:
+    """True R of the state the agent sees right now (also for no-R variants)."""
+    _, _, _, health_deficit, volatility_norm, utilization = env._risk_components()
+    return compute_risk_signal(health_deficit, volatility_norm, utilization)
+
+
 def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
     """Run one episode. train=True: explore + learn. train=False: the agent's
-    current epsilon is used as-is and nothing is learned (used by evaluation)."""
+    current epsilon is used as-is and nothing is learned."""
     obs, info = env.reset()
     start_net_worth = info["net_worth_usd"]
 
@@ -86,26 +109,31 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
     elevated_risk_steps = 0
     proactive_steps = 0
     invalid_steps = 0
+    danger_days = 0
     controllable_gain = 0.0
     liq_count = 0
     end_net_worth = start_net_worth
 
     done = False
     while not done:
+        r_before = risk_before_action(env)
         action = agent.select_action(obs, info["action_mask"])   # only actions that can work
         next_obs, reward, terminated, truncated, info = env.step(action)
 
         if train:
             # the "no R" ablation must not get R's replay boost either
             per_risk = info["risk_signal"] if env.use_risk_signal else 0.0
-            agent.store_transition(obs, action, reward, next_obs, terminated or truncated,
+            # v3: only a TRUE end (terminated) stops the future value.
+            # Day 90 (truncated) is just where we stop watching.
+            agent.store_transition(obs, action, reward, next_obs, terminated,
                                    per_risk, info["action_mask"])
             agent.learn()
 
         episode_rewards.append(reward)
         invalid_steps += int(info["invalid_action"])
+        danger_days += int(info["health_factor"] < HF_BUFFER)
         controllable_gain += info["interest_usd"] + info["liquidation_loss_usd"]
-        if info["risk_signal"] > SAFE_RISK_THRESHOLD:
+        if r_before > SAFE_RISK_THRESHOLD:
             elevated_risk_steps += 1
             # only count de-risking actions that actually did something
             if is_de_risking_action(action) and not info["invalid_action"]:
@@ -130,6 +158,7 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
         "risk_adjusted_return": end_net_worth / (1 + liq_count),  # proposal: N_user / (1 + liquidation_count)
         "proactive_response_rate": (proactive_steps / elevated_risk_steps) if elevated_risk_steps > 0 else None,
         "invalid_action_rate": invalid_steps / len(episode_rewards),
+        "danger_days_share": danger_days / len(episode_rewards),
         "epsilon": agent.epsilon,
         "target_net_active": agent.target_net_active,
     }
@@ -141,6 +170,8 @@ def parse_args():
     p.add_argument("--no-cs", action="store_true", help="turn OFF the Credit Score CS")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--episodes", type=int, default=N_EPISODES)
+    p.add_argument("--buffer-penalty", type=float, default=0.0,
+                   help="HF danger-zone penalty per day at HF 1.05 (0 = off, try 1.0)")
     return p.parse_args()
 
 
@@ -148,15 +179,19 @@ def main():
     args = parse_args()
     use_r, use_cs = not args.no_r, not args.no_cs
     run_name = f"{variant_name(use_r, use_cs)}_seed{args.seed}"
+    if args.buffer_penalty > 0:
+        run_name += f"_buf{args.buffer_penalty:g}"
 
     run_ckpt_dir = os.path.join(CHECKPOINT_DIR, run_name)
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(run_ckpt_dir, exist_ok=True)
 
     print(f"=== Training run: {run_name} (R={'on' if use_r else 'off'}, "
-          f"CS={'on' if use_cs else 'off'}, episodes={args.episodes}, split=train) ===")
+          f"CS={'on' if use_cs else 'off'}, buffer_penalty={args.buffer_penalty:g}, "
+          f"episodes={args.episodes}, split=train) ===")
 
-    env = LendingEnv(seed=args.seed, use_risk_signal=use_r, use_credit_score=use_cs, split="train")
+    env = LendingEnv(seed=args.seed, use_risk_signal=use_r, use_credit_score=use_cs, split="train",
+                     buffer_penalty=args.buffer_penalty)
     agent = DQNAgent(obs_dim=env.observation_space.shape[0], n_actions=env.action_space.n, seed=args.seed)
 
     log_rows = []
@@ -174,6 +209,7 @@ def main():
                   f"avg_wealth_chg={np.mean([r['net_wealth_change'] for r in recent]):8.2f} | "
                   f"ctrl_gain={np.mean([r['controllable_gain'] for r in recent]):6.2f} | "
                   f"proactive={np.mean(proactive_vals) if proactive_vals else float('nan'):.2f} | "
+                  f"danger_days={np.mean([r['danger_days_share'] for r in recent]):.2f} | "
                   f"invalid={np.mean([r['invalid_action_rate'] for r in recent]):.2f}")
 
         if ep % CHECKPOINT_EVERY == 0:
@@ -197,6 +233,7 @@ def main():
     print(f"  avg risk-adj. return:  {last['risk_adjusted_return'].mean():.2f}")
     print(f"  avg proactive rate:    {last['proactive_response_rate'].dropna().mean():.3f}")
     print(f"  avg invalid rate:      {last['invalid_action_rate'].mean():.3f}")
+    print(f"  danger days (HF<{HF_BUFFER}):  {last['danger_days_share'].mean():.3f}")
 
 
 if __name__ == "__main__":

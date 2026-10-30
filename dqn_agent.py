@@ -1,5 +1,5 @@
 """
-dqn_agent.py  (v2 -- action masking)
+dqn_agent.py  (v4 -- smooth learning: LR 1e-4 + soft target updates)
 
 Step 7: DQN agent for the Auto.defi pipeline.
 
@@ -10,23 +10,42 @@ Architecture / schedule (Auto.gov Table I + proposal Sec 5.3):
   agent replay near-liquidation moments more often than routine ones.
 - Epsilon-greedy exploration, linearly decayed from EPSILON_START to
   EPSILON_END over EPSILON_DECAY_STEPS.
-- Target network activated once epsilon < 0.3 (as in Auto.gov), then
-  hard-updated every TARGET_UPDATE_EVERY steps.
+- Target network activated once epsilon < 0.3 (as in Auto.gov).
+
+What changed in v4 (30 Oct -- the REWARD is unchanged):
+  Check 0 (diagnose.py) showed the LR 1e-3 agent SWINGING between safe and
+  unsafe from one checkpoint to the next (liq_rate 0.04 -> 0.54 -> 0.08 ->
+  0.72), while its value guesses stayed flat. Its action scores were close
+  together, so each big update flipped the greedy choice ("policy churn",
+  Schaul et al., 2022). Two standard ways to make updates smaller/smoother:
+  1. LR 1e-3 -> 1e-4 (tested 30 Oct: 0/300 liquidations on VAL for all 3
+     seeds at ep1000, swings between checkpoints much smaller).
+  2. SOFT TARGET UPDATES (Polyak averaging, Lillicrap et al., 2016): instead
+     of copying the online net into the target net in ONE jump every 500
+     steps, the target net moves a tiny step (TARGET_TAU = 0.5%) towards the
+     online net after EVERY learning step. The learning target then changes
+     smoothly instead of jumping every 500 steps. With tau 0.005 the target
+     lags about 200 steps behind on average (hard copy every 500: about 250),
+     so mainly the JUMPS are removed, not the lag.
+  Set USE_SOFT_TARGET = False to get the v3 hard copy back.
+
+What changed in v3 (fix plan Step 2):
+  1. DOUBLE DQN (van Hasselt, Guez & Silver, 2016): the online network
+     PICKS the best next action, the target network JUDGES its value.
+  2. HUBER LOSS (Mnih et al., 2015) -- tried, turned OFF (made the agent
+     forget liquidations, run v3h).
+  3. GRADIENT CLIPPING (max norm GRAD_CLIP_NORM): caps each learning step.
 
 What changed in v2:
 - GAMMA = 0.95 (was 0.5). User-level liquidation risk builds over several
   days, so the agent needs a longer horizon to act early.
-- ACTION MASKING: the environment says which actions can actually do
-  something right now (info["action_mask"]). The agent only picks among
-  those -- both when acting and when computing the "best next action" in
-  its learning targets. This stops it wasting most of its learning on
-  actions that do nothing (Huang & Ontanon, 2020, "A Closer Look at
-  Invalid Action Masking in Policy Gradient Algorithms"). Passing no mask
-  keeps the old behaviour (all actions allowed).
+- ACTION MASKING (Huang & Ontanon, 2020): the agent only picks among
+  actions that can actually do something (info["action_mask"]), both when
+  acting and in its learning targets.
 
 Hyperparameters not specified in the proposal (learning rate, buffer size,
-batch size, epsilon decay length, target update frequency, PER alpha/beta)
-are reasonable defaults below -- tunable.
+batch size, epsilon decay length, target update, PER alpha/beta,
+gradient clip) are reasonable defaults below -- tunable.
 
 Usage (standalone smoke test against LendingEnv):
     python dqn_agent.py
@@ -39,6 +58,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "env"))
@@ -54,14 +74,23 @@ TARGET_NET_EPSILON_THRESHOLD = 0.3  # target net activates once epsilon drops be
 # Changed from Auto.gov's 0.5 -- see module docstring:
 GAMMA = 0.95
 
+# v3 -- steadier learning (see module docstring):
+USE_DOUBLE_DQN = True
+USE_HUBER_LOSS = False   # turned off 29 Oct: Huber made the agent forget liquidations (v3h)
+GRAD_CLIP_NORM = 10.0
+
+# v4 -- smooth learning (see module docstring):
+USE_SOFT_TARGET = False  # tested 30 Oct on seed 1: no clear gain, so the final setup keeps the hard copy
+TARGET_TAU = 0.005       # soft update: target = (1 - tau) * target + tau * online, every step
+
 # Not specified by the proposal -- reasonable defaults, tune later:
-LR = 1e-3
+LR = 1e-4                # was 1e-3 (changed 30 Oct: 1e-3 made the policy swing)
 BATCH_SIZE = 64
 BUFFER_CAPACITY = 50_000
 EPSILON_START = 1.0
 EPSILON_END = 0.05
 EPSILON_DECAY_STEPS = 20_000
-TARGET_UPDATE_EVERY = 500  # steps, once target net is active
+TARGET_UPDATE_EVERY = 500  # steps; only used when USE_SOFT_TARGET = False
 PRIORITY_EPSILON = 1e-3    # floor so no transition ever has zero priority
 PRIORITY_ALPHA = 0.6       # how much prioritization vs. uniform sampling (0=uniform)
 
@@ -210,6 +239,38 @@ class DQNAgent:
     def store_transition(self, obs, action, reward, next_obs, done, risk_signal: float, next_mask=None):
         self.replay_buffer.add(obs, action, reward, next_obs, done, risk_signal, next_mask)
 
+    # ---- Learning target ----
+    def _next_state_values(self, next_obs_t, next_masks_t):
+        """Value of the best ALLOWED next action ("hold" is always allowed).
+        Double DQN: the online net picks the action, the target net judges it.
+        Before the target net is active, both jobs use the online net."""
+        judge_net = self.target_net if self.target_net_active else self.online_net
+        judge_q = judge_net(next_obs_t)
+
+        if USE_DOUBLE_DQN:
+            picker_q = self.online_net(next_obs_t).masked_fill(~next_masks_t, float("-inf"))
+            best_actions = picker_q.argmax(dim=1, keepdim=True)
+            next_values = judge_q.gather(1, best_actions).squeeze(1)
+        else:  # v2 behaviour: the same net picks and judges
+            next_values = judge_q.masked_fill(~next_masks_t, float("-inf")).max(dim=1)[0]
+
+        return torch.where(torch.isfinite(next_values), next_values, torch.zeros_like(next_values))
+
+    # ---- Target network update ----
+    @torch.no_grad()
+    def _soft_update_target(self, tau: float = TARGET_TAU):
+        """Polyak averaging: move every target weight a small step towards the online weight."""
+        for t_param, o_param in zip(self.target_net.parameters(), self.online_net.parameters()):
+            t_param.mul_(1.0 - tau).add_(o_param, alpha=tau)
+
+    def _update_target(self):
+        if not self.target_net_active:
+            return
+        if USE_SOFT_TARGET:
+            self._soft_update_target()
+        elif self.steps_done % TARGET_UPDATE_EVERY == 0:   # v3: hard copy in one jump
+            self.target_net.load_state_dict(self.online_net.state_dict())
+
     # ---- Learning step ----
     def learn(self, batch_size: int = BATCH_SIZE, beta: float = 0.4) -> float | None:
         if len(self.replay_buffer) < batch_size:
@@ -229,27 +290,25 @@ class DQNAgent:
         q_values = self.online_net(obs_t).gather(1, actions_t).squeeze(1)
 
         with torch.no_grad():
-            # before the target net activates, bootstrap off the online net itself
-            bootstrap_net = self.target_net if self.target_net_active else self.online_net
-            next_q_all = bootstrap_net(next_obs_t)
-            # only actions allowed in the next state count ("hold" is always allowed)
-            next_q_all = next_q_all.masked_fill(~next_masks_t, float("-inf"))
-            next_q_values = next_q_all.max(dim=1)[0]
-            next_q_values = torch.where(torch.isfinite(next_q_values), next_q_values,
-                                        torch.zeros_like(next_q_values))
+            next_q_values = self._next_state_values(next_obs_t, next_masks_t)
             targets = rewards_t + GAMMA * next_q_values * (1.0 - dones_t)
 
         td_errors = (q_values - targets).detach().cpu().numpy()
-        loss = (weights_t * (q_values - targets).pow(2)).mean()
+        if USE_HUBER_LOSS:
+            per_sample = F.smooth_l1_loss(q_values, targets, reduction="none")
+        else:
+            per_sample = (q_values - targets).pow(2)
+        loss = (weights_t * per_sample).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
+        if GRAD_CLIP_NORM is not None:
+            torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), GRAD_CLIP_NORM)
         self.optimizer.step()
 
         self.replay_buffer.update_priorities(indices, td_errors, risk_signals)
 
-        if self.target_net_active and self.steps_done % TARGET_UPDATE_EVERY == 0:
-            self.target_net.load_state_dict(self.online_net.state_dict())
+        self._update_target()
 
         self.steps_done += 1
         self.update_epsilon()
@@ -257,21 +316,43 @@ class DQNAgent:
         return float(loss.item())
 
 
+def weight_distance(net_a: nn.Module, net_b: nn.Module) -> float:
+    """Total absolute difference between two networks' weights (0 = identical)."""
+    with torch.no_grad():
+        return float(sum((a - b).abs().sum() for a, b in zip(net_a.parameters(), net_b.parameters())))
+
+
 def main():
     """Smoke test: run the agent (with action masking) against LendingEnv
-    for a few hundred steps to confirm nothing crashes."""
+    for a few thousand steps to confirm nothing crashes and that the target
+    network follows the online network smoothly."""
     from lending_env import LendingEnv  # noqa: E402
 
+    print(f"DQN v4: LR={LR:g}, double_dqn={USE_DOUBLE_DQN}, huber={USE_HUBER_LOSS}, "
+          f"grad_clip={GRAD_CLIP_NORM}, soft_target={USE_SOFT_TARGET} (tau={TARGET_TAU})")
     env = LendingEnv(seed=42)
     obs, info = env.reset()
     agent = DQNAgent(obs_dim=env.observation_space.shape[0], n_actions=env.action_space.n, seed=42)
 
-    losses, invalid = [], 0
-    for step_i in range(500):
+    # Check A: one soft update moves the target exactly tau of the way to the online net.
+    with torch.no_grad():
+        for p in agent.online_net.parameters():
+            p.add_(0.01)
+    before = weight_distance(agent.online_net, agent.target_net)
+    agent._soft_update_target()
+    after = weight_distance(agent.online_net, agent.target_net)
+    ok = abs(after - (1.0 - TARGET_TAU) * before) < 1e-3 * before
+    print(f"check A (soft update): distance {before:.3f} -> {after:.3f} "
+          f"(expected {(1.0 - TARGET_TAU) * before:.3f}) -> {'OK' if ok else 'FAIL'}")
+    agent.target_net.load_state_dict(agent.online_net.state_dict())
+
+    # Check B: run past target-net activation (epsilon < 0.3 at about step 14,800).
+    losses, invalid, dists = [], 0, []
+    for step_i in range(16_000):
         action = agent.select_action(obs, info["action_mask"])
         next_obs, reward, terminated, truncated, info = env.step(action)
         invalid += int(info["invalid_action"])
-        agent.store_transition(obs, action, reward, next_obs, terminated or truncated,
+        agent.store_transition(obs, action, reward, next_obs, terminated,
                                info["risk_signal"], info["action_mask"])
 
         loss = agent.learn()
@@ -282,12 +363,20 @@ def main():
         if terminated or truncated:
             obs, info = env.reset()
 
-        if step_i % 100 == 0:
+        if agent.target_net_active:
+            dists.append(weight_distance(agent.online_net, agent.target_net))
+        if step_i % 2000 == 0:
             avg_loss = np.mean(losses[-50:]) if losses else float("nan")
             print(f"step {step_i}: epsilon={agent.epsilon:.3f} target_active={agent.target_net_active} "
                   f"buffer={len(agent.replay_buffer)} avg_loss={avg_loss:.4f}")
 
-    print(f"\nDone. invalid actions chosen: {invalid} (should be 0 with masking)")
+    print(f"\ninvalid actions chosen: {invalid} (should be 0 with masking)")
+    if dists:
+        jumps = int(np.sum(np.diff(dists) < -0.5 * np.array(dists[:-1])))
+        print(f"check B (target follows smoothly): online-target distance after activation "
+              f"min {min(dists):.2f} / max {max(dists):.2f}; sudden drops to ~0: {jumps} "
+              f"(soft update -> 0; hard copy -> about 1 per {TARGET_UPDATE_EVERY} steps)")
+    print("Done.")
 
 
 if __name__ == "__main__":

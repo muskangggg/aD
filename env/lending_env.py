@@ -1,10 +1,27 @@
 """
-lending_env.py  (v3 -- proposal reward)
+lending_env.py  (v3.3 -- optional HF danger-zone penalty)
 
 Gymnasium environment for the DQN agent -- simulates a single borrower
 position on an Aave-style lending pool across a mixed real/GBM ETH price
 path, with the Risk Signal R in the state and a Credit Score CS shaping
 the reward.
+
+What changed in v3.3 (fix plan Step 2b -- EXPERIMENT, needs supervisor OK):
+  Evaluation showed the agent keeps sitting at HF ~1.03-1.10. Sitting
+  there costs NOTHING day after day; the only punishment is a liquidation,
+  which is rare and often comes days later. Like speeding: 95 days out of
+  100 nothing happens, so the agent keeps speeding.
+  Optional fix: a small penalty EVERY DAY the health factor (after the
+  day's price move) is below HF_BUFFER (1.15), growing linearly as HF falls:
+        penalty = buffer_penalty * (HF_BUFFER - HF) / (HF_BUFFER - MIN_HF_AFTER_ACTION)
+        HF >= 1.15 -> 0     HF 1.10 -> 0.5 x     HF 1.05 -> 1.0 x     HF 1.00 -> 1.5 x
+  With buffer_penalty = 1.0, sitting at HF 1.05 costs ~1 reward per day,
+  about 5x what extra borrowing earns per day, so it no longer pays.
+  Above 1.15 normal borrowing is free.
+  It uses HF (which every model variant sees), not R, so the ablation stays
+  clean: R and CS are still only in the state / credit multiplier.
+  OFF by default (buffer_penalty = 0.0) so all earlier runs are reproducible.
+  Turn on with: python training_loop.py --buffer-penalty 1.0
 
 What changed in v3 (to match the thesis proposal, Sec 5.1):
   1. REWARD = proposal formula:
@@ -113,6 +130,10 @@ ALPHA = 10.0                  # reward per USD of controllable wealth change (x1
 BETA = 50.0                   # hard penalty on liquidation
 INVALID_ACTION_PENALTY = 0.01
 
+# ---- v3.3: optional HF danger-zone penalty (Step 2b experiment, OFF by default) ----
+HF_BUFFER = 1.15              # penalty starts below this HF
+DEFAULT_BUFFER_PENALTY = 0.0  # 0 = off; try 1.0 (= penalty per day at HF 1.05)
+
 # Risk level above which a step counts as "high risk" for the proactive
 # response rate metric (used by training_loop / evaluation). With the
 # early-warning health deficit, R > 0.5 means roughly HF < 1.3.
@@ -135,6 +156,7 @@ class LendingEnv(gym.Env):
         use_risk_signal: bool = True,
         use_credit_score: bool = True,
         split: str = "train",   # "train" for training, "val" for tuning, "test" for final results
+        buffer_penalty: float = DEFAULT_BUFFER_PENALTY,   # v3.3: 0 = off
     ):
         super().__init__()
 
@@ -149,6 +171,7 @@ class LendingEnv(gym.Env):
         # ablation switches -- leave both True for the full model
         self.use_risk_signal = use_risk_signal
         self.use_credit_score = use_credit_score
+        self.buffer_penalty = float(buffer_penalty)
 
         self.action_space = spaces.Discrete(HOLD_ACTION + 1)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float32)
@@ -317,14 +340,24 @@ class LendingEnv(gym.Env):
             return 0.5 + self.credit_score   # gains count more for good-history users
         return 1.5 - self.credit_score       # losses count more for poor-history users
 
-    def _compute_reward(self, wealth_change: float, liquidated: bool, valid: bool) -> float:
+    def _buffer_penalty(self, hf: float) -> float:
+        """v3.3: daily penalty for sitting in the danger zone (HF < HF_BUFFER).
+        0 when switched off or HF >= HF_BUFFER; buffer_penalty at HF 1.05."""
+        if self.buffer_penalty <= 0 or hf >= HF_BUFFER:
+            return 0.0
+        return self.buffer_penalty * (HF_BUFFER - hf) / (HF_BUFFER - MIN_HF_AFTER_ACTION)
+
+    def _compute_reward(self, wealth_change: float, liquidated: bool, valid: bool,
+                        buffer_penalty: float = 0.0) -> float:
         """Proposal reward: ALPHA * m(CS) * wealth change - BETA if liquidated,
-        plus a tiny penalty for actions that did nothing."""
+        plus a tiny penalty for actions that did nothing, minus the optional
+        danger-zone penalty (v3.3)."""
         reward = ALPHA * self._credit_multiplier(wealth_change) * wealth_change
         if liquidated:
             reward -= BETA
         if not valid:
             reward -= INVALID_ACTION_PENALTY
+        reward -= buffer_penalty
         return reward
 
     # ---------- gym API ----------
@@ -373,7 +406,8 @@ class LendingEnv(gym.Env):
         self.liquidation_count += int(liquidated)
 
         wealth_change = interest_usd + liquidation_loss_usd   # the part actions control
-        reward = self._compute_reward(wealth_change, liquidated, valid)
+        buffer_pen = self._buffer_penalty(hf)                 # v3.3 (0 when off)
+        reward = self._compute_reward(wealth_change, liquidated, valid, buffer_pen)
 
         # v3.2: a liquidation does NOT end the episode (Aave liquidations are
         # partial -- the position lives on). The episode always runs to day 90,
@@ -393,6 +427,7 @@ class LendingEnv(gym.Env):
             invalid_action=not valid,
             interest_usd=interest_usd,
             liquidation_loss_usd=liquidation_loss_usd,
+            buffer_penalty=buffer_pen,             # v3.3: danger-zone penalty this step
         )
         return self._build_observation(), reward, terminated, truncated, info
 
@@ -477,6 +512,13 @@ def main():
     env_masked = LendingEnv(seed=42, use_risk_signal=False, use_credit_score=False)
     obs_m, _ = env_masked.reset()
     print(f"\nMasked obs (last 4 should be 0): {np.round(obs_m[-4:], 3)}")
+
+    # Check 6 (v3.3): danger-zone penalty values
+    env_buf = LendingEnv(seed=42, buffer_penalty=1.0)
+    vals = ", ".join(f"HF {h:.2f} -> {env_buf._buffer_penalty(h):.2f}" for h in (1.30, 1.15, 1.10, 1.05, 1.00))
+    print(f"\nDanger-zone penalty (buffer_penalty=1.0): {vals}")
+    print(f"   -> should be 0 at HF >= {HF_BUFFER}, 1.0 at HF 1.05; default env has it OFF "
+          f"(buffer_penalty={LendingEnv(seed=42).buffer_penalty})")
 
 
 if __name__ == "__main__":
