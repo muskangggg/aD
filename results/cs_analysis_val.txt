@@ -1,0 +1,71 @@
+=== CS analysis on VAL split, 300 episodes each, same price paths and users as evaluate.py ===
+
+CS groups (equal size): low 0.25-0.41 | mid 0.41-0.61 | high 0.61-0.97
+
+TABLE A - behaviour per CS group (mean over seeds)
+  CS working: for full / cs_only, avg_hf falls and avg_debt rises from low -> high CS.
+  Control (r_only / none): rows should look about the same (they can't see CS).
+                    avg_hf  min_hf  avg_debt  ctrl_gain  liq_rate
+group     cs_group                                               
+static    low        1.969   1.355     399.0       6.27     0.050
+          mid        1.934   1.334     401.0       6.66     0.010
+          high       1.954   1.353     401.0       6.51     0.030
+heuristic low        1.609   1.158     489.0       7.28     0.000
+          mid        1.602   1.162     483.0       7.17     0.000
+          high       1.607   1.182     487.0       7.24     0.000
+full      low        1.574   1.145     775.0       4.45     0.000
+          mid        1.556   1.170     796.0       4.41     0.000
+          high       1.526   1.167     822.0       4.70     0.000
+r_only    low        1.686   1.172     592.0       6.31     0.000
+          mid        1.667   1.169     589.0       6.19     0.000
+          high       1.666   1.169     588.0       6.34     0.000
+cs_only   low        1.543   1.176     573.0       6.55     0.037
+          mid        1.524   1.134     566.0       6.17     0.067
+          high       1.522   1.133     565.0       5.72     0.113
+none      low        1.616   1.202     516.0       7.04     0.000
+          mid        1.604   1.203     506.0       6.93     0.000
+          high       1.607   1.211     510.0       7.01     0.000
+
+TABLE B - per run: does behaviour follow CS?
+    group          strategy  corr_cs_debt  corr_cs_hf  debt_high_minus_low  hf_high_minus_low
+   static            static        -0.002      -0.102                2.029             -0.015
+heuristic         heuristic        -0.100      -0.025               -2.756             -0.002
+     full full_seed42_lr1e4        -0.191      -0.746              -21.492             -0.156
+     full  full_seed1_lr1e4         0.607      -0.219              151.327             -0.034
+     full  full_seed2_lr1e4         0.017       0.073                9.200              0.047
+   r_only     r_only_seed42         0.073      -0.085               46.455             -0.075
+   r_only      r_only_seed1        -0.095      -0.138              -44.319             -0.012
+   r_only      r_only_seed2        -0.119       0.070              -14.283              0.029
+  cs_only    cs_only_seed42        -0.064      -0.135                4.454             -0.022
+  cs_only     cs_only_seed1         0.291      -0.149               17.607             -0.062
+  cs_only     cs_only_seed2        -0.405       0.357              -44.436              0.021
+     none       none_seed42         0.049      -0.142                5.492             -0.038
+     none        none_seed1        -0.087       0.100               -5.904              0.007
+     none        none_seed2        -0.111       0.123              -15.656              0.006
+
+TABLE B (summary) - mean +- std over seeds
+            corr_cs_debt     corr_cs_hf debt_high_minus_low hf_high_minus_low
+group                                                                        
+static             -0.00          -0.10               +2.03             -0.02
+heuristic          -0.10          -0.02               -2.76             -0.00
+full       +0.14 +- 0.41  -0.30 +- 0.42     +46.34 +- 92.20     -0.05 +- 0.10
+r_only     -0.05 +- 0.10  -0.05 +- 0.11      -4.05 +- 46.24     -0.02 +- 0.05
+cs_only    -0.06 +- 0.35  +0.02 +- 0.29      -7.46 +- 32.69     -0.02 +- 0.04
+none       -0.05 +- 0.09  +0.03 +- 0.15      -5.36 +- 10.58     -0.01 +- 0.03
+  CS working: corr_cs_debt > 0 and corr_cs_hf < 0 for full / cs_only, clearly bigger than for r_only / none.
+  Note: even the control can show a small correlation, because the same users always meet
+  the same price paths. That is why we compare WITH-CS agents against the control, not against 0.
+
+TABLE C - plain money (ctrl_gain, $) vs the CS goal the agent was trained for (cs_score)
+               ctrl_gain         cs_score
+group                                    
+static             +6.48           +64.40
+heuristic          +7.23           +73.78
+full       +4.52 +- 1.87  +46.28 +- 19.10
+r_only     +6.28 +- 0.17   +64.15 +- 1.71
+cs_only    +6.15 +- 1.29  +60.21 +- 16.11
+none       +6.99 +- 0.51   +71.33 +- 5.17
+  If full / cs_only rank better on cs_score than on ctrl_gain, they are doing what
+  they were trained for: 'CS hurts money' is then a design choice, not a failure.
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\cs_analysis_val.csv
