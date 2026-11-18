@@ -1,0 +1,85 @@
+=== CS analysis on TEST split, 300 episodes each, same price paths and users as evaluate.py ===
+
+CS groups (equal size): low 0.25-0.41 | mid 0.41-0.61 | high 0.61-0.97
+
+TABLE A - behaviour per CS group (mean over seeds)
+  CS working: for full / cs_only, avg_hf falls and avg_debt rises from low -> high CS.
+  Control (r_only / none): rows should look about the same (they can't see CS).
+                       avg_hf  min_hf  avg_debt  ctrl_gain  liq_rate
+group        cs_group                                               
+static       low        1.967   1.548     403.0       4.15     0.010
+             mid        1.935   1.529     399.0       4.25     0.040
+             high       1.937   1.527     397.0       5.22     0.040
+heuristic    low        1.645   1.285     481.0       4.12     0.000
+             mid        1.624   1.275     477.0       4.66     0.010
+             high       1.640   1.277     473.0       5.69     0.020
+heuristic_cs low        4.930   2.000      11.0       4.87     0.000
+             mid        3.470   1.670     213.0       5.01     0.000
+             high       1.640   1.277     473.0       5.69     0.020
+full         low        2.159   1.379     469.0       3.16     0.004
+             mid        2.094   1.329     471.0       3.72     0.006
+             high       2.016   1.315     464.0       4.90     0.008
+r_only       low        2.423   1.423     458.0       1.47     0.014
+             mid        2.403   1.415     462.0       2.04     0.010
+             high       2.422   1.423     457.0       3.29     0.008
+cs_only      low        3.028   1.646     282.0       4.13     0.004
+             mid        2.955   1.600     299.0       4.65     0.002
+             high       2.376   1.432     400.0       5.45     0.008
+none         low        1.779   1.374     747.0       0.35     0.000
+             mid        1.790   1.371     739.0       1.41     0.000
+             high       1.779   1.368     736.0       3.15     0.004
+
+TABLE B - per run: does behaviour follow CS?
+       group            strategy  corr_cs_debt  corr_cs_hf  debt_high_minus_low  hf_high_minus_low
+      static              static        -0.966      -0.061               -5.536             -0.030
+   heuristic           heuristic        -0.077      -0.044               -7.652             -0.006
+heuristic_cs        heuristic_cs         0.624      -0.761              461.937             -3.290
+        full    full_seed42_env4         0.047      -0.483               28.484             -0.432
+        full     full_seed1_env4        -0.015       0.345              -27.680              0.662
+        full     full_seed2_env4        -0.470       0.704             -244.024              0.564
+        full     full_seed3_env4         0.245      -0.307               70.824             -0.598
+        full     full_seed4_env4         0.541      -0.521              148.012             -0.910
+      r_only  r_only_seed42_env4        -0.681      -0.062               -2.256             -0.045
+      r_only   r_only_seed1_env4        -0.007      -0.022                5.265             -0.022
+      r_only   r_only_seed2_env4        -0.081       0.038               -8.515              0.060
+      r_only   r_only_seed3_env4        -0.062      -0.013              -11.690             -0.007
+      r_only   r_only_seed4_env4         0.037       0.005               12.534              0.008
+     cs_only cs_only_seed42_env4         0.722      -0.795              297.533             -1.981
+     cs_only  cs_only_seed1_env4         0.176      -0.601               46.887             -0.175
+     cs_only  cs_only_seed2_env4        -0.188       0.264               29.049             -0.115
+     cs_only  cs_only_seed3_env4         0.635      -0.793              129.880             -0.520
+     cs_only  cs_only_seed4_env4         0.675      -0.703               89.984             -0.469
+        none    none_seed42_env4        -0.060       0.022               -8.683              0.037
+        none     none_seed1_env4        -0.065      -0.087              -28.932             -0.005
+        none     none_seed2_env4        -0.614      -0.045               -1.866             -0.018
+        none     none_seed3_env4        -0.091       0.069              -10.680              0.008
+        none     none_seed4_env4        -0.168      -0.045               -3.483             -0.019
+
+TABLE B (summary) - mean +- std over seeds
+               corr_cs_debt     corr_cs_hf debt_high_minus_low hf_high_minus_low
+group                                                                           
+static                -0.97          -0.06               -5.54             -0.03
+heuristic             -0.08          -0.04               -7.65             -0.01
+heuristic_cs          +0.62          -0.76             +461.94             -3.29
+full          +0.07 +- 0.37  -0.05 +- 0.55     -4.88 +- 148.27     -0.14 +- 0.71
+r_only        -0.16 +- 0.30  -0.01 +- 0.04       -0.93 +- 9.93     -0.00 +- 0.04
+cs_only       +0.40 +- 0.40  -0.53 +- 0.45   +118.67 +- 107.38     -0.65 +- 0.76
+none          -0.20 +- 0.24  -0.02 +- 0.06     -10.73 +- 10.80     +0.00 +- 0.02
+  CS working: corr_cs_debt > 0 and corr_cs_hf < 0 for full / cs_only, clearly bigger than for r_only / none.
+  Note: even the control can show a small correlation, because the same users always meet
+  the same price paths. That is why we compare WITH-CS agents against the control, not against 0.
+
+TABLE C - money (ctrl_gain, $) and total reward, mean +- std over seeds
+                  ctrl_gain           reward
+group                                       
+static                +4.54           +41.89
+heuristic             +4.83           +47.60
+heuristic_cs          +5.19           +51.41
+full          +3.92 +- 1.01  +38.93 +- 10.26
+r_only        +2.27 +- 1.20  +22.09 +- 12.00
+cs_only       +4.74 +- 0.22   +47.18 +- 2.38
+none          +1.63 +- 5.74  +16.26 +- 57.50
+  CS useful: full / cs_only earn MORE than r_only / none (they can fit each user's rate).
+  heuristic_cs shows what a hand-made rule that knows the CS rule can do.
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\cs_analysis_test.csv

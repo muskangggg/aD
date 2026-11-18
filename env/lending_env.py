@@ -1,87 +1,69 @@
 """
-lending_env.py  (v3.3 -- optional HF danger-zone penalty)
+lending_env.py  (v4 -- credit-based loan terms + forward-looking Risk Signal)
 
 Gymnasium environment for the DQN agent -- simulates a single borrower
-position on an Aave-style lending pool across a mixed real/GBM ETH price
-path, with the Risk Signal R in the state and a Credit Score CS shaping
-the reward.
+position on an Aave-style lending pool across a mixed real/synthetic ETH
+price path, with the Risk Signal R in the state and the Credit Score CS
+setting the user's loan terms.
 
-What changed in v3.3 (fix plan Step 2b -- EXPERIMENT, needs supervisor OK):
-  Evaluation showed the agent keeps sitting at HF ~1.03-1.10. Sitting
-  there costs NOTHING day after day; the only punishment is a liquidation,
-  which is rare and often comes days later. Like speeding: 95 days out of
-  100 nothing happens, so the agent keeps speeding.
-  Optional fix: a small penalty EVERY DAY the health factor (after the
-  day's price move) is below HF_BUFFER (1.15), growing linearly as HF falls:
-        penalty = buffer_penalty * (HF_BUFFER - HF) / (HF_BUFFER - MIN_HF_AFTER_ACTION)
-        HF >= 1.15 -> 0     HF 1.10 -> 0.5 x     HF 1.05 -> 1.0 x     HF 1.00 -> 1.5 x
-  With buffer_penalty = 1.0, sitting at HF 1.05 costs ~1 reward per day,
-  about 5x what extra borrowing earns per day, so it no longer pays.
-  Above 1.15 normal borrowing is free.
-  It uses HF (which every model variant sees), not R, so the ablation stays
-  clean: R and CS are still only in the state / credit multiplier.
-  OFF by default (buffer_penalty = 0.0) so all earlier runs are reproducible.
-  Turn on with: python training_loop.py --buffer-penalty 1.0
+What changed in v4 (6 Nov, upgrade plan, approved by the supervisor):
+  Step 1 (cs_analysis.py) and the 30 Oct ablation showed that neither R
+  nor CS changed what the BEST action was, so agents that could see them
+  had no reason to use them:
+    - R v2 was mostly HF rescaled (HF is already in the observation).
+    - CS only re-weighted the reward (m(CS)), while every user had the same
+      loan. The best plan was "stay safe" for everyone, so CS changed
+      nothing except adding reward noise.
+  Rule we follow now: a feature can only help if it changes WHAT THE BEST
+  ACTION IS.
 
-What changed in v3 (to match the thesis proposal, Sec 5.1):
-  1. REWARD = proposal formula:
-        reward = ALPHA * m(CS) * (change in net wealth)  -  BETA if liquidated
-     "Change in net wealth" here is the part the agent's choices control:
-     interest earned/paid + any liquidation loss. The ETH price move is left
-     out of the reward because no action can change the user's ETH exposure
-     (see 2), so it is the same for every strategy and would only add noise.
-     The full net worth (incl. price moves) is still reported as the
-     primary metric N_user.
-     Credit multiplier m(CS) is asymmetric:
-        gains  x (0.5 + CS)   -> good-history users are rewarded more
-        losses x (1.5 - CS)   -> poor-history users are punished more
-     R is no longer in the reward -- it is in the STATE, as an early warning
-     (proposal Objective 2).
-  2. WALLET PER ASSET: the user holds ETH and USDC in a wallet. Actions move
-     tokens between wallet, collateral and debt without converting them, so
-     the user's net ETH exposure never changes -- the agent manages the LOAN,
-     it does not trade ETH.
-  3. INTEREST (fixed yearly rates, accrued daily):
-        borrow rate on debt, supply rate on collateral, and an external yield
-        on idle wallet USDC (5% = Auto.gov's external competing supply rate).
-     Borrowing to hold USDC earns a small spread, but adds liquidation risk.
-     Putting USDC into collateral or repaying is safer but earns less.
-     That trade-off is what the agent has to learn.
-  4. SAFETY CONSTRAINT: a borrow (or withdraw) that would push HF below 1.05
-     is blocked (proposal Sec 5.1). Blocked actions count as invalid.
-  5. AAVE-STYLE LIQUIDATION when HF < 1: a liquidator repays 50% of the debt
-     and takes that value + a 5% bonus from the collateral. Since v3.2 the
-     episode CONTINUES after a liquidation (Aave liquidations are partial),
-     so all strategies are valued on the same final day. Before v3.2 the
-     episode ended, which froze a liquidated user's net worth at an earlier,
-     higher ETH price and made liquidation look good in falling markets.
-     info["liquidation_count"] counts liquidations in the episode.
-  6. INVALID ACTION PENALTY: a tiny penalty for actions that do nothing
-     (e.g. deposit with an empty wallet), so the agent picks "hold" instead.
-  7. ACTION MASK (v3.1): info["action_mask"] says which actions can do
-     something in the current state, so the DQN only chooses among those
-     (like Aave's app greying out actions you can't take).
-     ALPHA raised to 10 and BETA to 50 after the first tuning runs.
+  1. CREDIT-BASED BORROW RATE (USE_CS_LOAN_TERMS): CS sets the user's rate,
+     like a bank gives cheaper loans to customers with a good history:
+         borrow APR = 2% + 6% x (1 - CS)
+         CS 0.25 -> 6.5%   CS 0.50 -> 5.0%   CS 0.95 -> 2.3%
+     (break-even with the 5% wallet yield at CS 0.5, close to the median user,
+     so about half the users should borrow and half should repay).
+     Idle wallet USDC still earns 5%. So for a high-CS user borrowing to
+     hold USDC EARNS a spread; for a low-CS user it LOSES money and repaying
+     is better. The best action now depends on CS.
+  2. NO CS REWARD WEIGHT (USE_CS_REWARD_WEIGHT = False): reward is now
+         ALPHA * (interest + liquidation loss) - BETA per liquidation
+     The old m(CS) multiplier (0.5+CS gains / 1.5-CS losses) is kept in the
+     code but off. CS now acts through the loan, not through the reward.
+  3. FORWARD-LOOKING RISK SIGNAL R (compute_risk_signal v3):
+         R = P(liquidation within 5 days | position, today's volatility)
+     Volatility is a RiskMetrics EWMA (lambda 0.94) updated every day, so
+     it reacts within a few days when the market turns stormy.
+     Observation slots 8-10 are now: R, volatility (EWMA, annualized / 2),
+     utilization. "High risk" (SAFE_RISK_THRESHOLD) is now R > 5%.
+  4. ABLATION = HIDING INFORMATION ONLY:
+         --no-r  : R, volatility and utilization are zeroed in the observation
+         --no-cs : CS is zeroed in the observation
+     The WORLD stays the same for every variant (the user still pays their
+     CS-based rate, the market is still calm or stormy). So any difference
+     between variants comes only from what the agent can SEE.
+  Unchanged: actions, $100 action size, 1.05 safety rule, Aave-style
+  liquidation (50% close factor, 5% bonus), episodes run to day 90,
+  optional danger-zone penalty (off), observation size 12.
 
-Unchanged from v2: ablation masking (R parts / CS zeroed in the observation
-when switched off), normalized observation, train/test price split.
-
-Action space: Discrete(N_ASSETS * 4 + 1)
-  action // 4 = asset index (0=ETH, 1=USDC), action % 4 = type
-  (0=deposit, 1=withdraw, 2=borrow, 3=repay); the last index = hold.
+Action space: Discrete(9)
+  action // 4 = asset (0=ETH, 1=USDC), action % 4 = type
+  (0=deposit, 1=withdraw, 2=borrow, 3=repay); 8 = hold.
 
 Observation (12 values):
   [wallet_ETH, wallet_USDC, collat_ETH, collat_USDC, debt_ETH, debt_USDC,
    (all in USD / 1000)
    eth_price / start_price, hf_scaled,
-   health_deficit, volatility_norm, utilization, credit_score]
+   R (liquidation probability, 5 days), volatility_norm, utilization, credit_score]
 
 Usage (standalone checks):
     python env/lending_env.py
 """
 
+import math
 import os
 import sys
+
 import numpy as np
 import pandas as pd
 import gymnasium as gym
@@ -95,6 +77,10 @@ from compute_risk_signal import (  # noqa: E402
     compute_health_deficit,
     compute_utilization,
     compute_risk_signal,
+    compute_liquidation_probability,
+    liquidation_distance,
+    update_ewma_variance,
+    RISK_HORIZON_DAYS,
 )
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -102,46 +88,51 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 ASSETS = ["ETH", "USDC"]
 N_ASSETS = len(ASSETS)
 ACTION_TYPES = ["deposit", "withdraw", "borrow", "repay"]
-HOLD_ACTION = N_ASSETS * len(ACTION_TYPES)  # last index = hold
+HOLD_ACTION = N_ASSETS * len(ACTION_TYPES)
 
-LIQUIDATION_THRESHOLD = 0.8  # standard Aave-style assumption
-ACTION_SIZE_USD = 100.0      # fixed size per deposit/withdraw/borrow/repay action
-EPISODE_LENGTH = 90          # days per episode
-VOL_WINDOW = 30              # rolling window for in-episode volatility
+LIQUIDATION_THRESHOLD = 0.8
+ACTION_SIZE_USD = 100.0
+EPISODE_LENGTH = 90
 DAYS_PER_YEAR = 365
 
 # ---- Starting position ----
-START_COLLATERAL_ETH_USD = 1000.0  # $1000 of ETH as collateral
-START_DEBT_USDC = 400.0            # $400 USDC borrowed -> HF = 2.0
-START_WALLET_USDC = 400.0          # the borrowed $400 sits in the wallet
+START_COLLATERAL_ETH_USD = 1000.0
+START_DEBT_USDC = 400.0
+START_WALLET_USDC = 400.0
 
-# ---- Interest rates (per year, accrued daily) -- assumptions, tunable ----
-BORROW_APR = {"ETH": 0.03, "USDC": 0.03}   # cost of debt
-SUPPLY_APR = {"ETH": 0.02, "USDC": 0.02}   # earned on collateral
-EXTERNAL_YIELD_APR = 0.05                  # earned on idle wallet USDC (Auto.gov's external supply rate)
+# ---- Interest rates (per year, accrued daily) ----
+BORROW_APR = {"ETH": 0.03, "USDC": 0.03}   # v3 rate for everyone (used when USE_CS_LOAN_TERMS = False)
+SUPPLY_APR = {"ETH": 0.02, "USDC": 0.02}
+EXTERNAL_YIELD_APR = 0.05
 
-# ---- Safety constraint and liquidation (Aave-style) ----
-MIN_HF_AFTER_ACTION = 1.05   # proposal: block borrows that would push H below 1.05
-CLOSE_FACTOR = 0.5           # liquidator repays 50% of the debt
-LIQUIDATION_BONUS = 0.05     # ...and takes 5% extra collateral as a bonus
+# ---- v4: credit-based loan terms ----
+USE_CS_LOAN_TERMS = True
+CS_RATE_BASE = 0.02            # borrow APR = CS_RATE_BASE + CS_RATE_SPREAD * (1 - CS)
+CS_RATE_SPREAD = 0.06
+USE_CS_REWARD_WEIGHT = False   # v3 m(CS) reward multiplier, off in v4
 
-# ---- Reward (proposal: alpha and beta are tunable) ----
-ALPHA = 10.0                  # reward per USD of controllable wealth change (x10 so daily interest is "loud" enough to learn from)
-BETA = 50.0                   # hard penalty on liquidation
+# ---- Safety constraint and liquidation ----
+MIN_HF_AFTER_ACTION = 1.05
+CLOSE_FACTOR = 0.5
+LIQUIDATION_BONUS = 0.05
+
+# ---- Reward ----
+ALPHA = 10.0
+BETA = 50.0
 INVALID_ACTION_PENALTY = 0.01
 
-# ---- v3.3: optional HF danger-zone penalty (Step 2b experiment, OFF by default) ----
-HF_BUFFER = 1.15              # penalty starts below this HF
-DEFAULT_BUFFER_PENALTY = 0.0  # 0 = off; try 1.0 (= penalty per day at HF 1.05)
+# ---- optional HF danger-zone penalty (v3.3 experiment, OFF) ----
+HF_BUFFER = 1.15
+DEFAULT_BUFFER_PENALTY = 0.0
 
-# Risk level above which a step counts as "high risk" for the proactive
-# response rate metric (used by training_loop / evaluation). With the
-# early-warning health deficit, R > 0.5 means roughly HF < 1.3.
-SAFE_RISK_THRESHOLD = 0.5
+# v4: a step is "high risk" when the chance of liquidation within
+# RISK_HORIZON_DAYS is above 5% (used by the proactive / pro_gap metrics).
+SAFE_RISK_THRESHOLD = 0.05
 
 # ---- Observation scaling ----
 USD_SCALE = 1000.0
 HF_CLIP = 5.0
+VOL_NORM_SCALE = 2.0     # annualized volatility / 2 (stormy ETH ~1.3 -> 0.65)
 EPS = 1e-9
 
 
@@ -155,8 +146,8 @@ class LendingEnv(gym.Env):
         seed: int | None = None,
         use_risk_signal: bool = True,
         use_credit_score: bool = True,
-        split: str = "train",   # "train" for training, "val" for tuning, "test" for final results
-        buffer_penalty: float = DEFAULT_BUFFER_PENALTY,   # v3.3: 0 = off
+        split: str = "train",   # train / val / test / stress
+        buffer_penalty: float = DEFAULT_BUFFER_PENALTY,
     ):
         super().__init__()
 
@@ -168,7 +159,7 @@ class LendingEnv(gym.Env):
         self.wallet_scores = pd.read_csv(wallet_scores_csv_path)
         self.rng = np.random.default_rng(seed)
 
-        # ablation switches -- leave both True for the full model
+        # ablation switches: they only hide information from the observation
         self.use_risk_signal = use_risk_signal
         self.use_credit_score = use_credit_score
         self.buffer_penalty = float(buffer_penalty)
@@ -176,7 +167,6 @@ class LendingEnv(gym.Env):
         self.action_space = spaces.Discrete(HOLD_ACTION + 1)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float32)
 
-        # episode state (token amounts), set in reset()
         self.price_path = None
         self.t = 0
         self.start_price = 1.0
@@ -185,12 +175,13 @@ class LendingEnv(gym.Env):
         self.debt = {a: 0.0 for a in ASSETS}
         self.credit_score = 0.5
         self.liquidation_count = 0
+        self.var_daily = self.price_sim.sigma_daily ** 2   # EWMA variance (v4)
 
     # ---------- value helpers ----------
     def _price(self, asset: str) -> float:
         if asset == "ETH":
             return float(self.price_path[self.t])
-        return 1.0  # USDC pegged
+        return 1.0
 
     def _usd(self, balances: dict) -> float:
         return sum(balances[a] * self._price(a) for a in ASSETS)
@@ -201,38 +192,51 @@ class LendingEnv(gym.Env):
     @staticmethod
     def _health_factor(collateral_usd: float, debt_usd: float) -> float:
         if debt_usd <= EPS:
-            return 100.0  # "no risk" sentinel when there is no debt
+            return 100.0
         return (collateral_usd * LIQUIDATION_THRESHOLD) / debt_usd
 
     def _current_hf(self) -> float:
         return self._health_factor(self._usd(self.collateral), self._usd(self.debt))
 
+    # ---------- v4: loan terms ----------
+    def borrow_apr(self, asset: str) -> float:
+        """The user's yearly borrow rate. v4: depends on the credit score."""
+        if not USE_CS_LOAN_TERMS:
+            return BORROW_APR[asset]
+        return CS_RATE_BASE + CS_RATE_SPREAD * (1.0 - self.credit_score)
+
+    # ---------- v4: volatility and risk ----------
+    def sigma_daily(self) -> float:
+        return math.sqrt(max(self.var_daily, 0.0))
+
     def _volatility_norm(self) -> float:
-        window_start = max(0, self.t - VOL_WINDOW)
-        window = self.price_path[window_start:self.t + 1]
-        if len(window) < 2:
-            return 0.0
-        log_returns = np.diff(np.log(window))
-        vol = log_returns.std() * np.sqrt(365)
-        # rough fixed-range normalization (ETH annualized vol typically 0.2-1.2); clip to [0,1]
-        return float(np.clip(vol / 1.2, 0.0, 1.0))
+        return float(np.clip(self.sigma_daily() * math.sqrt(DAYS_PER_YEAR) / VOL_NORM_SCALE, 0.0, 1.0))
+
+    def _liquidation_probability(self) -> float:
+        p = self._price("ETH")
+        d, already = liquidation_distance(
+            self.collateral["ETH"] * p, self.collateral["USDC"],
+            self.debt["ETH"] * p, self.debt["USDC"], LIQUIDATION_THRESHOLD)
+        return compute_liquidation_probability(d, already, self.sigma_daily(), RISK_HORIZON_DAYS)
 
     def _risk_components(self):
+        """(collateral_usd, debt_usd, hf, R, volatility_norm, utilization).
+        v4: the 4th value is the liquidation probability R (was health_deficit),
+        so older scripts calling compute_risk_signal(x4, x5, x6) still get R."""
         collateral_usd, debt_usd = self._usd(self.collateral), self._usd(self.debt)
         hf = self._health_factor(collateral_usd, debt_usd)
-        health_deficit = compute_health_deficit(hf)
+        liq_prob = self._liquidation_probability()
         volatility_norm = self._volatility_norm()
         utilization = compute_utilization(debt_usd, collateral_usd)
-        return collateral_usd, debt_usd, hf, health_deficit, volatility_norm, utilization
+        return collateral_usd, debt_usd, hf, liq_prob, volatility_norm, utilization
 
     # ---------- observation ----------
     def _build_observation(self) -> np.ndarray:
-        _, _, hf, health_deficit, volatility_norm, utilization = self._risk_components()
+        _, _, hf, liq_prob, volatility_norm, utilization = self._risk_components()
         p = self._price("ETH")
 
-        # ablation masking: hide what this model variant is not supposed to see
         if not self.use_risk_signal:
-            health_deficit = volatility_norm = utilization = 0.0
+            liq_prob = volatility_norm = utilization = 0.0
         cs = self.credit_score if self.use_credit_score else 0.0
 
         return np.array([
@@ -244,7 +248,7 @@ class LendingEnv(gym.Env):
             self.debt["USDC"] / USD_SCALE,
             p / self.start_price,
             min(hf, HF_CLIP) / HF_CLIP,
-            health_deficit,
+            liq_prob,
             volatility_norm,
             utilization,
             cs,
@@ -252,15 +256,12 @@ class LendingEnv(gym.Env):
 
     # ---------- actions ----------
     def _apply_action(self, action: int) -> bool:
-        """Move tokens between wallet, collateral and debt.
-        Returns False if the action did nothing (empty wallet, no debt, or
-        blocked by the HF >= 1.05 safety constraint)."""
         if action == HOLD_ACTION:
             return True
 
         asset = ASSETS[action // len(ACTION_TYPES)]
         action_type = ACTION_TYPES[action % len(ACTION_TYPES)]
-        size = ACTION_SIZE_USD / self._price(asset)  # token amount for a $100 action
+        size = ACTION_SIZE_USD / self._price(asset)
 
         if action_type == "deposit":
             amount = min(size, self.wallet[asset])
@@ -276,7 +277,7 @@ class LendingEnv(gym.Env):
             self.collateral[asset] -= amount
             self.wallet[asset] += amount
             if self._usd(self.debt) > EPS and self._current_hf() < MIN_HF_AFTER_ACTION:
-                self.collateral[asset] += amount  # undo -- unsafe
+                self.collateral[asset] += amount
                 self.wallet[asset] -= amount
                 return False
 
@@ -284,7 +285,7 @@ class LendingEnv(gym.Env):
             self.debt[asset] += size
             self.wallet[asset] += size
             if self._current_hf() < MIN_HF_AFTER_ACTION:
-                self.debt[asset] -= size  # undo -- unsafe
+                self.debt[asset] -= size
                 self.wallet[asset] -= size
                 return False
 
@@ -298,9 +299,6 @@ class LendingEnv(gym.Env):
         return True
 
     def action_mask(self) -> np.ndarray:
-        """Which actions would actually do something right now (True = allowed).
-        Tries each action on the current balances, then restores them.
-        "hold" is always allowed. Used for action masking in the DQN."""
         saved = (dict(self.wallet), dict(self.collateral), dict(self.debt))
         mask = np.zeros(self.action_space.n, dtype=bool)
         for a in range(self.action_space.n):
@@ -310,18 +308,14 @@ class LendingEnv(gym.Env):
 
     # ---------- interest and liquidation ----------
     def _accrue_interest(self) -> float:
-        """One day of interest. Returns the USD change in net worth."""
         before = self._net_worth()
         self.wallet["USDC"] *= 1 + EXTERNAL_YIELD_APR / DAYS_PER_YEAR
         for a in ASSETS:
             self.collateral[a] *= 1 + SUPPLY_APR[a] / DAYS_PER_YEAR
-            self.debt[a] *= 1 + BORROW_APR[a] / DAYS_PER_YEAR
+            self.debt[a] *= 1 + self.borrow_apr(a) / DAYS_PER_YEAR
         return self._net_worth() - before
 
     def _liquidate(self) -> float:
-        """Aave-style: the liquidator repays CLOSE_FACTOR of the debt and
-        takes that value + LIQUIDATION_BONUS from the collateral.
-        Returns the USD change in net worth (negative = the bonus lost)."""
         before = self._net_worth()
         collateral_usd, debt_usd = self._usd(self.collateral), self._usd(self.debt)
         repaid_usd = CLOSE_FACTOR * debt_usd
@@ -334,24 +328,20 @@ class LendingEnv(gym.Env):
 
     # ---------- reward ----------
     def _credit_multiplier(self, wealth_change: float) -> float:
-        if not self.use_credit_score:
+        """v3 m(CS) weight. v4: off (USE_CS_REWARD_WEIGHT = False) -> always 1."""
+        if not USE_CS_REWARD_WEIGHT or not self.use_credit_score:
             return 1.0
         if wealth_change >= 0:
-            return 0.5 + self.credit_score   # gains count more for good-history users
-        return 1.5 - self.credit_score       # losses count more for poor-history users
+            return 0.5 + self.credit_score
+        return 1.5 - self.credit_score
 
     def _buffer_penalty(self, hf: float) -> float:
-        """v3.3: daily penalty for sitting in the danger zone (HF < HF_BUFFER).
-        0 when switched off or HF >= HF_BUFFER; buffer_penalty at HF 1.05."""
         if self.buffer_penalty <= 0 or hf >= HF_BUFFER:
             return 0.0
         return self.buffer_penalty * (HF_BUFFER - hf) / (HF_BUFFER - MIN_HF_AFTER_ACTION)
 
     def _compute_reward(self, wealth_change: float, liquidated: bool, valid: bool,
                         buffer_penalty: float = 0.0) -> float:
-        """Proposal reward: ALPHA * m(CS) * wealth change - BETA if liquidated,
-        plus a tiny penalty for actions that did nothing, minus the optional
-        danger-zone penalty (v3.3)."""
         reward = ALPHA * self._credit_multiplier(wealth_change) * wealth_change
         if liquidated:
             reward -= BETA
@@ -367,6 +357,7 @@ class LendingEnv(gym.Env):
         self.price_path = self.price_sim.get_episode_path(episode_length=EPISODE_LENGTH)
         self.t = 0
         self.start_price = self._price("ETH")
+        self.var_daily = self.price_sim.sigma_daily ** 2   # start from the train-calibrated level
 
         self.wallet = {"ETH": 0.0, "USDC": START_WALLET_USDC}
         self.collateral = {"ETH": START_COLLATERAL_ETH_USD / self.start_price, "USDC": 0.0}
@@ -387,7 +378,8 @@ class LendingEnv(gym.Env):
             "debt_usd": debt_usd,
             "health_factor": self._health_factor(collateral_usd, debt_usd),
             "credit_score": self.credit_score,
-            "action_mask": self.action_mask(),   # allowed actions in THIS state
+            "borrow_apr_usdc": self.borrow_apr("USDC"),   # v4: the user's CS-based rate
+            "action_mask": self.action_mask(),
         }
         info.update(extra)
         return info
@@ -395,52 +387,65 @@ class LendingEnv(gym.Env):
     def step(self, action: int):
         valid = self._apply_action(int(action))
 
-        self.t += 1                                # new day: price moves
+        self.t += 1                                 # new day: price moves
+        log_ret = math.log(self.price_path[self.t] / self.price_path[self.t - 1])
+        self.var_daily = update_ewma_variance(self.var_daily, log_ret)   # v4: volatility update
         interest_usd = self._accrue_interest()
 
-        _, debt_usd, hf, health_deficit, volatility_norm, utilization = self._risk_components()
-        risk_signal = compute_risk_signal(health_deficit, volatility_norm, utilization)
+        _, debt_usd, hf, liq_prob, volatility_norm, utilization = self._risk_components()
+        risk_signal = compute_risk_signal(liq_prob, volatility_norm, utilization)
 
         liquidated = hf < 1.0 and debt_usd > EPS
         liquidation_loss_usd = self._liquidate() if liquidated else 0.0
         self.liquidation_count += int(liquidated)
 
-        wealth_change = interest_usd + liquidation_loss_usd   # the part actions control
-        buffer_pen = self._buffer_penalty(hf)                 # v3.3 (0 when off)
+        wealth_change = interest_usd + liquidation_loss_usd
+        buffer_pen = self._buffer_penalty(hf)
         reward = self._compute_reward(wealth_change, liquidated, valid, buffer_pen)
 
-        # v3.2: a liquidation does NOT end the episode (Aave liquidations are
-        # partial -- the position lives on). The episode always runs to day 90,
-        # so every strategy's net worth is measured on the SAME final day.
-        # Only a fully wiped-out collateral ends it early.
         terminated = bool(self._usd(self.collateral) <= EPS)
         truncated = bool(self.t >= EPISODE_LENGTH)
 
         info = self._info(
-            health_factor=hf,                      # the HF that was checked this step
-            risk_signal=risk_signal,
-            health_deficit=health_deficit,
+            health_factor=hf,
+            risk_signal=risk_signal,                 # v4: liquidation probability (5 days)
+            health_deficit=compute_health_deficit(hf),   # kept for logs only
             volatility_norm=volatility_norm,
             utilization=utilization,
-            liquidated=liquidated,                 # liquidated on THIS step
-            liquidation_count=self.liquidation_count,  # liquidations so far this episode
+            liquidated=liquidated,
+            liquidation_count=self.liquidation_count,
             invalid_action=not valid,
             interest_usd=interest_usd,
             liquidation_loss_usd=liquidation_loss_usd,
-            buffer_penalty=buffer_pen,             # v3.3: danger-zone penalty this step
+            buffer_penalty=buffer_pen,
         )
         return self._build_observation(), reward, terminated, truncated, info
 
 
-# ---------- standalone checks ----------
+# ---------- baselines and standalone checks ----------
 def action_id(action_type: str, asset: str) -> int:
     return ASSETS.index(asset) * len(ACTION_TYPES) + ACTION_TYPES.index(action_type)
 
 
 def heuristic_policy(info: dict) -> int:
-    """Proposal baseline: repay when H < 1.2, borrow when H > 2.0, else hold."""
+    """Proposal baseline: repay when H < 1.2, borrow when H > 2.0, else hold (CS-blind)."""
     if info["health_factor"] < 1.2:
         return action_id("repay", "USDC")
+    if info["health_factor"] > 2.0:
+        return action_id("borrow", "USDC")
+    return HOLD_ACTION
+
+
+def heuristic_cs_policy(info: dict) -> int:
+    """v4 stronger baseline that KNOWS the CS rule: same as the heuristic, but
+    when the user's borrow rate is above the 5% wallet yield, borrowing loses
+    money, so it never borrows and pays the debt down instead."""
+    mask = info["action_mask"]
+    repay = action_id("repay", "USDC")
+    if info["health_factor"] < 1.2:
+        return repay
+    if info["borrow_apr_usdc"] > EXTERNAL_YIELD_APR:
+        return repay if mask[repay] else HOLD_ACTION
     if info["health_factor"] > 2.0:
         return action_id("borrow", "USDC")
     return HOLD_ACTION
@@ -455,18 +460,22 @@ def _run(env, policy_fn, label, reset=True):
     total_reward = controllable = 0.0
     invalid = 0
     min_hf = info["health_factor"]
+    max_r = 0.0
     while True:
         obs, reward, terminated, truncated, info = env.step(policy_fn(info))
         total_reward += reward
         controllable += info["interest_usd"] + info["liquidation_loss_usd"]
         invalid += int(info["invalid_action"])
         min_hf = min(min_hf, info["health_factor"])
+        max_r = max(max_r, info["risk_signal"])
         if terminated or truncated:
             break
     price_chg = (env._price("ETH") / start_price - 1) * 100
-    print(f"[{label}] days={env.t:2d} liquidations={info['liquidation_count']} "
-          f"N: {start_nw:.0f}->{info['net_worth_usd']:.0f} (ETH {price_chg:+.1f}%) "
-          f"controllable={controllable:+.2f} min_HF={min_hf:.2f} invalid={invalid} reward={total_reward:.2f}")
+    print(f"[{label}] CS={env.credit_score:.2f} rate={env.borrow_apr('USDC'):.1%} "
+          f"liquidations={info['liquidation_count']} N: {start_nw:.0f}->{info['net_worth_usd']:.0f} "
+          f"(ETH {price_chg:+.1f}%) controllable={controllable:+.2f} min_HF={min_hf:.2f} "
+          f"max_R={max_r:.2f} invalid={invalid} reward={total_reward:.2f}")
+    return controllable
 
 
 def main():
@@ -474,28 +483,24 @@ def main():
     obs, info = env.reset()
     print("Initial observation (12 values):")
     print(np.round(obs, 3))
-    print(f"Start: N=${info['net_worth_usd']:.0f} (wallet ${info['wallet_usd']:.0f} + collateral "
-          f"${info['collateral_usd']:.0f} - debt ${info['debt_usd']:.0f}), HF={info['health_factor']:.2f}\n")
+    print(f"Start: N=${info['net_worth_usd']:.0f}, HF={info['health_factor']:.2f}, "
+          f"CS={env.credit_score:.2f}, borrow rate={env.borrow_apr('USDC'):.2%}\n")
 
-    # Check 1: three simple strategies run end to end
-    _run(env, lambda i: env.action_space.sample(), "random   ")
-    _run(env, lambda i: HOLD_ACTION, "static   ")
-    _run(env, heuristic_policy, "heuristic")
-
-    # Check 2: safety constraint -- borrowing every day must never push HF below 1.05
+    # Check 1: strategies run end to end
+    _run(env, lambda i: env.action_space.sample(), "random    ")
+    _run(env, lambda i: HOLD_ACTION, "static    ")
+    _run(env, heuristic_policy, "heuristic ")
+    _run(env, heuristic_cs_policy, "heur_cs   ")
     _run(env, lambda i: action_id("borrow", "USDC"), "borrow-all")
-    print("   -> min_HF should be >= 1.05 at the moment of borrowing; later blocked borrows count as invalid")
 
-    # Check 3: forced crash -- ETH falls 60% in 90 days, static user gets liquidated
-    # (the episode now continues to day 90 after a liquidation)
+    # Check 2: forced crash -> liquidation, episode continues to day 90
     env.reset()
     p0 = env.start_price
     env.price_path = np.linspace(p0, p0 * 0.4, len(env.price_path))
-    _run(env, lambda i: HOLD_ACTION, "crash    ", reset=False)
-    print(f"   -> should liquidate (>=1) and still run to day 90; each liquidation costs a "
-          f"{LIQUIDATION_BONUS:.0%} bonus on {CLOSE_FACTOR:.0%} of the debt and -{BETA} reward")
+    _run(env, lambda i: HOLD_ACTION, "crash     ", reset=False)
+    print("   -> should liquidate (>=1), still run to day 90, and max_R should reach 1.00")
 
-    # Check 4: action mask matches what actually happens
+    # Check 3: action mask matches what happens
     mismatches = 0
     for _ in range(5):
         obs, info = env.reset()
@@ -506,19 +511,59 @@ def main():
             obs, r, te, tr, info = env.step(a)
             mismatches += int(allowed == info["invalid_action"])
             done = te or tr
-    print(f"\nAction mask check: {mismatches} mismatches (should be 0)")
+    print(f"\nCheck 3 - action mask: {mismatches} mismatches (should be 0)")
 
-    # Check 5: ablation masking hides R and CS from the observation
-    env_masked = LendingEnv(seed=42, use_risk_signal=False, use_credit_score=False)
-    obs_m, _ = env_masked.reset()
-    print(f"\nMasked obs (last 4 should be 0): {np.round(obs_m[-4:], 3)}")
+    # Check 4: ablation masking (R, vol, util, CS hidden), the world unchanged
+    env_m = LendingEnv(seed=42, use_risk_signal=False, use_credit_score=False)
+    obs_m, info_m = env_m.reset()
+    env_f = LendingEnv(seed=42)
+    obs_f, info_f = env_f.reset()
+    same_world = (env_m.credit_score == env_f.credit_score and
+                  abs(env_m.borrow_apr("USDC") - env_f.borrow_apr("USDC")) < 1e-12)
+    print(f"Check 4 - masked obs (last 4 should be 0): {np.round(obs_m[-4:], 3)}; "
+          f"same user and rate as the full env: {same_world} (should be True)")
 
-    # Check 6 (v3.3): danger-zone penalty values
-    env_buf = LendingEnv(seed=42, buffer_penalty=1.0)
-    vals = ", ".join(f"HF {h:.2f} -> {env_buf._buffer_penalty(h):.2f}" for h in (1.30, 1.15, 1.10, 1.05, 1.00))
-    print(f"\nDanger-zone penalty (buffer_penalty=1.0): {vals}")
-    print(f"   -> should be 0 at HF >= {HF_BUFFER}, 1.0 at HF 1.05; default env has it OFF "
-          f"(buffer_penalty={LendingEnv(seed=42).buffer_penalty})")
+    # Check 5: CS sets the borrow rate (the whole point of v4)
+    print("Check 5 - borrow rate by CS (wallet USDC earns 5%):")
+    for cs in (0.25, 0.50, 0.75, 0.95):
+        env.credit_score = cs
+        rate = env.borrow_apr("USDC")
+        verdict = "borrowing EARNS" if rate < EXTERNAL_YIELD_APR else "borrowing LOSES" \
+            if rate > EXTERNAL_YIELD_APR else "break-even"
+        print(f"   CS {cs:.2f} -> {rate:.2%}  ({verdict})")
+
+    # Check 6: same position, low CS vs high CS: holding vs repaying the $400 debt
+    print("Check 6 - 90 days, same prices, static vs repay-all, low vs high CS:")
+    for cs in (0.25, 0.95):
+        res = {}
+        for name, pol in (("static", lambda i: HOLD_ACTION),
+                          ("repay-all", lambda i: action_id("repay", "USDC")
+                           if i["action_mask"][action_id("repay", "USDC")] else HOLD_ACTION)):
+            e = LendingEnv(seed=7)
+            e.reset()
+            e.credit_score = cs
+            e.price_path = np.full(len(e.price_path), e.start_price)   # flat price: only interest matters
+            gain = 0.0
+            info = e._info()
+            while True:
+                _, _, te, tr, info = e.step(pol(info))
+                gain += info["interest_usd"]
+                if te or tr:
+                    break
+            res[name] = gain
+        better = "repay-all" if res["repay-all"] > res["static"] else "static"
+        print(f"   CS {cs:.2f}: static {res['static']:+.2f}$, repay-all {res['repay-all']:+.2f}$ -> best: {better}")
+    print("   -> should be: low CS -> repay-all better, high CS -> static (keep the loan) better")
+
+    # Check 7: R reacts to volatility at the same HF
+    env.reset()
+    env.debt = {"ETH": 0.0, "USDC": env._usd(env.collateral) * LIQUIDATION_THRESHOLD / 1.3}
+    env.var_daily = 0.035 ** 2
+    r_calm = env._liquidation_probability()
+    env.var_daily = 0.07 ** 2
+    r_storm = env._liquidation_probability()
+    print(f"Check 7 - HF 1.30: R calm (3.5%/day) = {r_calm:.2%}, R stormy (7%/day) = {r_storm:.2%} "
+          f"(stormy should be much higher)")
 
 
 if __name__ == "__main__":

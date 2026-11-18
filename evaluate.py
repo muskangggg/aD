@@ -1,56 +1,48 @@
 """
-evaluate.py  (v2 -- better measurement, fix plan step 1)
+evaluate.py  (v3.2 -- env v4: CS-based rates, new R, stress split, action counts)
 
 Runs every strategy on the SAME price paths (same seed -> same paths and
 same credit scores for everyone, because actions never use the env's random
-generator), with no exploration, and prints two tables.
+generator), with no exploration, and prints three tables.
+
+What changed in v3 (6 Nov, env v4):
+  - int_paid uses each user's OWN borrow rate (it depends on CS in env v4).
+  - NEW baseline heuristic_cs: the heuristic, but it KNOWS the CS rule
+    (never borrows and pays debt down when the user's rate is above the 5%
+    wallet yield). A fair, stronger hand-made rule to beat.
+  - NEW split "stress": all paths synthetic, start stormy, 3x more crashes
+    (python evaluate.py --split stress). Never used for training or tuning.
+  - "high risk" now means R > 5% (chance of liquidation within 5 days),
+    measured before acting, with the TRUE R also for no-R variants.
+  - v3.1 (7 Nov): --seed (default 2026). With the same seed, VAL and TEST
+    share the SAME users (CS) and the SAME synthetic price moves (only the
+    real windows differ). Use a different seed for TEST (e.g. --seed 3031)
+    so the final test is independent of VAL.
+  - v3.2 (18 Nov): TABLE 3 -- action frequency. For every strategy, the share
+    of steps each of the 9 actions was CHOSEN (pooled over all steps), plus
+    the share that actually DID something (valid). Main use: check that a
+    trained agent learned to avoid "borrow_ETH" (it costs interest and the
+    borrowed ETH earns nothing in the wallet). Saved to
+    results/actions_<split>_seed<seed>.csv
 
 Strategies:
-  - static     : never rebalances (Auto.gov's static baseline)
-  - heuristic  : repays when H < 1.2, borrows when H > 2.0, else holds
-  - random     : random actions (sanity floor)
-  - borrow_all : NEW in v2 -- always tries to borrow USDC; only the 1.05
-                 safety rule stops it. Shows how much safety the rule gives
-                 on its own ("rule-only" baseline).
-Trained DQN runs are added with --runs, e.g. full_seed42 r_only_seed42.
+  - static       : never rebalances
+  - heuristic    : repays when H < 1.2, borrows when H > 2.0, else holds (CS-blind)
+  - heuristic_cs : heuristic + the CS rule above (v3)
+  - random       : random actions (sanity floor)
+  - borrow_all   : always tries to borrow USDC; only the 1.05 rule stops it
+Trained DQN runs are added with --runs, e.g. full_seed42_env4 none_seed42_env4.
 
-TABLE 1 -- main results (proposal Sec 5.4), per episode then averaged:
-  N_end      : net worth at episode end (primary metric)
-  liq_rate   : share of episodes with at least one liquidation
-  liq_count  : average liquidations per episode
-  risk_adj   : N_end / (1 + liquidation count)
-  ctrl_gain  : interest + liquidation loss (the part strategies control;
-               the ETH price move is the same for every strategy)
-  invalid    : share of actions that did nothing
-
-TABLE 2 -- behaviour (NEW in v2). Step-based rates are counted over ALL steps
-of ALL episodes of a strategy (pooled), so episodes with few risky days do
-not distort them.
-  proactive  : of high-risk steps, share where a deposit/repay worked
-  normal     : the same rate in normal (not high-risk) steps
-  pro_gap    : proactive - normal. Above 0 = the agent de-risks MORE when
-               risk is high, i.e. it really reacts to risk. A strategy that
-               presses deposit/repay all the time gets a gap near 0.
-  high_risk  : share of steps that were high risk (R > SAFE_RISK_THRESHOLD)
-  hf_lt_1.1  : share of steps with HF < 1.1 (very close to liquidation)
-  int_earned : interest earned (wallet USDC 5% + collateral 2%), $ per episode
-  int_paid   : interest paid on debt (3%), $ per episode
-  end_debt   : debt at episode end, $ (starts at $400)
-  idle_eth   : average ETH sitting in the wallet, $ (earns 0%)
-
-v2 change to "proactive": risk is now measured BEFORE the action (the state
-the strategy actually saw when it chose), not after the day's price move.
-Example: on a risky day the agent repays $100 and HF goes back above 1.3.
-v1 checked the risk AFTER the repay, saw "safe", and did not count that
-good repay at all. v2 counts it. So v2 numbers differ a bit from v1.
-R is always the TRUE risk, also for no-R variants that cannot see it.
+TABLE 1 -- main results: N_end, liq_rate, liq_count, risk_adj, ctrl_gain, invalid
+TABLE 2 -- behaviour (pooled over all steps): proactive, normal, pro_gap,
+  high_risk, hf_lt_1.1, int_earned, int_paid, end_debt, idle_eth
+TABLE 3 -- action frequency (% of steps each action was chosen)
 
 Usage:
-    python evaluate.py                                  # baselines only, VALIDATION split
-    python evaluate.py --runs full_seed42               # + a trained model (validation)
-    python evaluate.py --runs full_seed42 none_seed42 --episodes 300
+    python evaluate.py --runs full_seed42_env4 none_seed42_env4 --episodes 300
+    python evaluate.py --runs ... --split stress --episodes 300
     python evaluate.py --runs ... --split test          # FINAL results only, run once
-Per-episode results are saved to results/eval_<split>.csv
+Per-episode results are saved to results/eval_<split>_seed<seed>.csv
 """
 
 import argparse
@@ -64,16 +56,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "env"))
 
 from lending_env import (  # noqa: E402
     LendingEnv, ASSETS, ACTION_TYPES, HOLD_ACTION, SAFE_RISK_THRESHOLD,
-    BORROW_APR, SUPPLY_APR, EXTERNAL_YIELD_APR, DAYS_PER_YEAR,
-    heuristic_policy, action_id, compute_risk_signal,
+    SUPPLY_APR, EXTERNAL_YIELD_APR, DAYS_PER_YEAR,
+    heuristic_policy, heuristic_cs_policy, action_id, compute_risk_signal,
 )
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
-EVAL_SEED = 2026   # fixed -> every strategy sees identical price paths
-LOW_HF = 1.1       # "very close to liquidation" level for the hf_lt_1.1 column
+EVAL_SEED = 2026
+LOW_HF = 1.1
 
-VARIANT_FLAGS = {  # run-name prefix -> (use_risk_signal, use_credit_score)
+VARIANT_FLAGS = {
     "full": (True, True),
     "r_only": (True, False),
     "cs_only": (False, True),
@@ -82,18 +74,26 @@ VARIANT_FLAGS = {  # run-name prefix -> (use_risk_signal, use_credit_score)
 DE_RISKING = {"deposit", "repay"}
 
 
+def action_name(action: int) -> str:
+    """0 -> 'deposit_ETH', 6 -> 'borrow_USDC', 8 -> 'hold'."""
+    if action == HOLD_ACTION:
+        return "hold"
+    return f"{ACTION_TYPES[action % len(ACTION_TYPES)]}_{ASSETS[action // len(ACTION_TYPES)]}"
+
+
+ACTION_NAMES = [action_name(a) for a in range(HOLD_ACTION + 1)]
+
+
 def is_de_risking(action: int) -> bool:
     return action != HOLD_ACTION and ACTION_TYPES[action % len(ACTION_TYPES)] in DE_RISKING
 
 
 class EvalEnv(LendingEnv):
-    """The same environment, but it also remembers how much interest was
-    PAID and EARNED each day. The normal env only reports the net amount
-    (earned - paid). Nothing about the simulation changes."""
+    """Same environment, but it also remembers the interest PAID and EARNED each day."""
 
     def _accrue_interest(self) -> float:
         p = {a: self._price(a) for a in ASSETS}
-        self.last_paid = sum(self.debt[a] * p[a] * BORROW_APR[a] for a in ASSETS) / DAYS_PER_YEAR
+        self.last_paid = sum(self.debt[a] * p[a] * self.borrow_apr(a) for a in ASSETS) / DAYS_PER_YEAR
         self.last_earned = (self.wallet["USDC"] * EXTERNAL_YIELD_APR
                             + sum(self.collateral[a] * p[a] * SUPPLY_APR[a] for a in ASSETS)) / DAYS_PER_YEAR
         return super()._accrue_interest()
@@ -101,12 +101,12 @@ class EvalEnv(LendingEnv):
 
 def risk_before_action(env: LendingEnv) -> tuple[float, float]:
     """(HF, R) of the state the strategy sees right now, before it acts."""
-    _, _, hf, health_deficit, volatility_norm, utilization = env._risk_components()
-    return hf, compute_risk_signal(health_deficit, volatility_norm, utilization)
+    _, _, hf, liq_prob, volatility_norm, utilization = env._risk_components()
+    return hf, compute_risk_signal(liq_prob, volatility_norm, utilization)
 
 
 def make_dqn_policy(run_name: str, n_obs: int, n_actions: int):
-    import torch  # only needed for trained models
+    import torch
     from dqn_agent import QNetwork, masked_argmax
 
     net = QNetwork(n_obs, n_actions)
@@ -120,21 +120,25 @@ def make_dqn_policy(run_name: str, n_obs: int, n_actions: int):
     return act
 
 
-def evaluate(name, policy, use_r, use_cs, split, episodes):
-    env = EvalEnv(seed=EVAL_SEED, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
+def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
+    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
     rows = []
     for _ in range(episodes):
         obs, info = env.reset()
         c = dict(steps=0, invalid=0, high_steps=0, high_derisk=0, normal_steps=0, normal_derisk=0,
                  low_hf_steps=0)
+        chosen = {n: 0 for n in ACTION_NAMES}          # v3.2: how often each action was picked
+        valid = {n: 0 for n in ACTION_NAMES}           # ...and how often it actually did something
         ctrl = paid = earned = idle_eth = 0.0
         done = False
         while not done:
-            hf_now, r_now = risk_before_action(env)       # what the strategy sees
+            hf_now, r_now = risk_before_action(env)
             idle_eth += env.wallet["ETH"] * env._price("ETH")
-            a = policy(obs, info)
+            a = int(policy(obs, info))
             obs, reward, terminated, truncated, info = env.step(a)
 
+            chosen[action_name(a)] += 1
+            valid[action_name(a)] += int(not info["invalid_action"])
             worked_derisk = is_de_risking(a) and not info["invalid_action"]
             c["steps"] += 1
             c["invalid"] += int(info["invalid_action"])
@@ -154,6 +158,7 @@ def evaluate(name, policy, use_r, use_cs, split, episodes):
         n_end = info["net_worth_usd"]
         rows.append({
             "strategy": name,
+            "credit_score": env.credit_score,
             "N_end": n_end,
             "liquidated": liq_count > 0,
             "liq_count": liq_count,
@@ -164,6 +169,8 @@ def evaluate(name, policy, use_r, use_cs, split, episodes):
             "end_debt": info["debt_usd"],
             "idle_eth": idle_eth / c["steps"],
             **c,
+            **{f"act_{n}": v for n, v in chosen.items()},
+            **{f"ok_{n}": v for n, v in valid.items()},
         })
     return pd.DataFrame(rows)
 
@@ -194,22 +201,36 @@ def summarise(results: pd.DataFrame, order: list[str]) -> tuple[pd.DataFrame, pd
     return main_table, behaviour
 
 
+def action_table(results: pd.DataFrame, order: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """v3.2: TABLE 3. Share of all steps each action was chosen (rows sum to 1),
+    and the share where it was chosen AND did something (valid)."""
+    g = results.groupby("strategy", sort=False)
+    steps = g["steps"].sum().reindex(order)
+    chosen = g[[f"act_{n}" for n in ACTION_NAMES]].sum().reindex(order)
+    valid = g[[f"ok_{n}" for n in ACTION_NAMES]].sum().reindex(order)
+    chosen.columns = valid.columns = ACTION_NAMES
+    return chosen.div(steps, axis=0), valid.div(steps, axis=0)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--runs", nargs="*", default=[], help="trained run names, e.g. full_seed42")
-    p.add_argument("--split", default="val", choices=["train", "val", "test"],
-                   help="val (default) for tuning; test ONLY for the final results")
+    p.add_argument("--runs", nargs="*", default=[], help="trained run names, e.g. full_seed42_env4")
+    p.add_argument("--split", default="val", choices=["train", "val", "test", "stress"],
+                   help="val (default) for tuning; stress for the stress test; test ONLY for final results")
     p.add_argument("--episodes", type=int, default=200)
+    p.add_argument("--seed", type=int, default=EVAL_SEED,
+                   help="evaluation seed (users + price paths); use a different one for TEST, e.g. 3031")
     args = p.parse_args()
 
     rng = np.random.default_rng(0)
-    probe = LendingEnv(seed=EVAL_SEED, split=args.split)
+    probe = LendingEnv(seed=args.seed, split=args.split)
     n_obs, n_actions = probe.observation_space.shape[0], probe.action_space.n
     borrow_usdc = action_id("borrow", "USDC")
 
     strategies = [
         ("static", lambda o, i: HOLD_ACTION, True, True),
         ("heuristic", lambda o, i: heuristic_policy(i), True, True),
+        ("heuristic_cs", lambda o, i: heuristic_cs_policy(i), True, True),
         ("random", lambda o, i: int(rng.integers(0, n_actions)), True, True),
         ("borrow_all", lambda o, i: borrow_usdc, True, True),
     ]
@@ -219,27 +240,39 @@ def main():
 
     if args.split == "test":
         print("!!! TEST split: use this only for the FINAL results, not for tuning !!!\n")
-    print(f"=== Evaluation on {args.split.upper()} split, {args.episodes} episodes each, "
+    print(f"=== Evaluation on {args.split.upper()} split, {args.episodes} episodes each, seed {args.seed}, "
           f"same price paths for every strategy ===\n")
-    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes)
+    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes, args.seed)
                          for n, pol, r, cs in strategies], ignore_index=True)
 
     order = [s[0] for s in strategies]
     main_table, behaviour = summarise(results, order)
+    chosen, valid = action_table(results, order)
 
-    pd.set_option("display.width", 160)
+    pd.set_option("display.width", 200)
     print("TABLE 1 - main results")
     print(main_table.round({"N_end": 1, "liq_rate": 3, "liq_count": 2, "risk_adj": 1,
                             "ctrl_gain": 2, "invalid": 3}).to_string())
-    print(f"\nTABLE 2 - behaviour (high risk = R > {SAFE_RISK_THRESHOLD}, risk measured before acting)")
+    print(f"\nTABLE 2 - behaviour (high risk = R > {SAFE_RISK_THRESHOLD:.0%} chance of liquidation "
+          f"within 5 days, measured before acting)")
     print(behaviour.round(3).round({"int_earned": 2, "int_paid": 2, "end_debt": 0, "idle_eth": 0}).to_string())
     print("\nHow to read: pro_gap > 0 means it de-risks MORE when risk is high (real reaction to risk).")
     print("ctrl_gain = int_earned - int_paid + liquidation loss.")
 
+    print("\nTABLE 3 - action frequency (% of all steps the action was CHOSEN; each row sums to 100)")
+    print((chosen * 100).round(1).to_string())
+    print("\nTABLE 3b - % of all steps the action was chosen AND did something (valid)")
+    print((valid * 100).round(1).to_string())
+    print("\nHow to read: borrow_ETH should be ~0 for a trained agent (it pays interest, "
+          "and borrowed ETH earns nothing in the wallet).")
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out = os.path.join(RESULTS_DIR, f"eval_{args.split}.csv")
+    out = os.path.join(RESULTS_DIR, f"eval_{args.split}_seed{args.seed}.csv")
     results.to_csv(out, index=False)
+    act_out = os.path.join(RESULTS_DIR, f"actions_{args.split}_seed{args.seed}.csv")
+    pd.concat({"chosen": chosen, "valid": valid}, axis=1).to_csv(act_out)
     print(f"\nPer-episode results saved to {out}")
+    print(f"Action frequency saved to {act_out}")
 
 
 if __name__ == "__main__":

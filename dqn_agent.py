@@ -68,7 +68,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "env"))
 HIDDEN_DIM = 256
 N_HIDDEN_LAYERS = 3  # + input and output = 5 layers total (Auto.gov Table I)
 PRIORITY_HIGH_RISK_MULTIPLIER = 3.0
-PRIORITY_HIGH_RISK_THRESHOLD = 0.7
+PRIORITY_HIGH_RISK_THRESHOLD = 0.2
 TARGET_NET_EPSILON_THRESHOLD = 0.3  # target net activates once epsilon drops below this
 
 # Changed from Auto.gov's 0.5 -- see module docstring:

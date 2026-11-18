@@ -1,5 +1,10 @@
 """
-cs_analysis.py  (Step 1 of the upgrade plan -- read-only, no training)
+cs_analysis.py  (v2 -- for env v4; read-only, no training)
+
+v2 (6 Nov): env v4 gives low-CS users a HIGHER borrow rate (2% + 6% x (1 - CS)),
+so the best plan now really depends on CS: low CS -> repay / keep debt small,
+high CS -> borrowing pays. cs_score is replaced by the real env reward
+(v4 has no m(CS) weight), and heuristic_cs (knows the CS rule) is added.
 
 QUESTION: does the Credit Score CS make the agent treat users DIFFERENTLY?
   If CS works as designed (losses weigh 1.5 - CS, gains 0.5 + CS), an agent
@@ -20,10 +25,7 @@ WHAT IT DOES:
      min_hf    : lowest HF in the episode
      avg_debt  : average debt in $ over the 90 days
      ctrl_gain : interest + liquidation loss in $ (same as evaluate.py)
-     cs_score  : the CS-weighted reward = the goal a CS agent was TRAINED for
-                 (ALPHA * m(CS) * money change - BETA per liquidation),
-                 computed with the user's real CS for EVERY strategy so all
-                 are judged on the same CS goal
+     reward    : total env reward (the goal every agent was trained for)
 
 PRINTS:
   TABLE A - behaviour per CS group (low / mid / high), mean over seeds
@@ -32,7 +34,7 @@ PRINTS:
             CS working = debt goes UP with CS (corr > 0) and HF goes DOWN
             (corr < 0) for full / cs_only, and both close to 0 for the
             control groups r_only / none.
-  TABLE C - money vs the CS goal, per group
+  TABLE C - money and reward, per group
 
 Does NOT overwrite results/eval_<split>.csv. Saves results/cs_analysis_<split>.csv.
 
@@ -51,24 +53,19 @@ import pandas as pd
 from evaluate import (
     EvalEnv, make_dqn_policy, risk_before_action, VARIANT_FLAGS, EVAL_SEED, RESULTS_DIR,
 )
-from lending_env import HOLD_ACTION, ALPHA, BETA, HF_CLIP, heuristic_policy
+from lending_env import HOLD_ACTION, HF_CLIP, heuristic_policy, heuristic_cs_policy
 
 CS_LABELS = ["low", "mid", "high"]
 
 
-def cs_multiplier(cs: float, money_change: float) -> float:
-    """The proposal's credit multiplier, always with the user's REAL CS."""
-    return 0.5 + cs if money_change >= 0 else 1.5 - cs
-
-
-def run_strategy(name, group, policy, use_r, use_cs, split, episodes):
-    env = EvalEnv(seed=EVAL_SEED, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
+def run_strategy(name, group, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
+    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
     rows = []
     for ep in range(episodes):
         obs, info = env.reset()
         cs = float(env.credit_score)
         hfs, debts = [], []
-        ctrl = cs_score = 0.0
+        ctrl = total_reward = 0.0
         done = False
         while not done:
             hf_now, _ = risk_before_action(env)
@@ -78,13 +75,13 @@ def run_strategy(name, group, policy, use_r, use_cs, split, episodes):
             obs, reward, terminated, truncated, info = env.step(a)
             money = info["interest_usd"] + info["liquidation_loss_usd"]
             ctrl += money
-            cs_score += ALPHA * cs_multiplier(cs, money) * money - BETA * int(info["liquidated"])
+            total_reward += reward
             done = terminated or truncated
         rows.append({
             "strategy": name, "group": group, "episode": ep, "cs": cs,
             "avg_hf": float(np.mean(hfs)), "min_hf": float(np.min(hfs)),
             "avg_debt": float(np.mean(debts)), "end_debt": info["debt_usd"],
-            "ctrl_gain": ctrl, "cs_score": cs_score,
+            "ctrl_gain": ctrl, "reward": total_reward,
             "liquidated": int(info["liquidation_count"]) > 0,
         })
     return pd.DataFrame(rows)
@@ -105,25 +102,27 @@ def mean_std(values) -> str:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--runs", nargs="*", default=[])
-    p.add_argument("--split", default="val", choices=["train", "val", "test"])
+    p.add_argument("--split", default="val", choices=["train", "val", "test", "stress"])
     p.add_argument("--episodes", type=int, default=300)
+    p.add_argument("--seed", type=int, default=EVAL_SEED, help="use the same seed as evaluate.py")
     args = p.parse_args()
 
-    probe = EvalEnv(seed=EVAL_SEED, split=args.split)
+    probe = EvalEnv(seed=args.seed, split=args.split)
     n_obs, n_actions = probe.observation_space.shape[0], probe.action_space.n
 
     strategies = [
         ("static", "static", lambda o, i: HOLD_ACTION, True, True),
         ("heuristic", "heuristic", lambda o, i: heuristic_policy(i), True, True),
+        ("heuristic_cs", "heuristic_cs", lambda o, i: heuristic_cs_policy(i), True, True),
     ]
     for run in args.runs:
         variant = run.rsplit("_seed", 1)[0]
         use_r, use_cs = VARIANT_FLAGS[variant]
         strategies.append((run, variant, make_dqn_policy(run, n_obs, n_actions), use_r, use_cs))
 
-    print(f"=== CS analysis on {args.split.upper()} split, {args.episodes} episodes each, "
+    print(f"=== CS analysis on {args.split.upper()} split, {args.episodes} episodes each, seed {args.seed}, "
           f"same price paths and users as evaluate.py ===")
-    df = pd.concat([run_strategy(n, g, pol, r, c, args.split, args.episodes)
+    df = pd.concat([run_strategy(n, g, pol, r, c, args.split, args.episodes, args.seed)
                     for n, g, pol, r, c in strategies], ignore_index=True)
 
     # Same users for every strategy -> cut CS into 3 equal-size groups once
@@ -175,17 +174,17 @@ def main():
     print("  the same price paths. That is why we compare WITH-CS agents against the control, not against 0.")
 
     # ---- TABLE C: money vs the CS goal ----
-    per_run_c = df.groupby(["group", "strategy"], sort=False)[["ctrl_gain", "cs_score"]].mean()
+    per_run_c = df.groupby(["group", "strategy"], sort=False)[["ctrl_gain", "reward"]].mean()
     table_c = pd.DataFrame({
-        col: per_run_c.groupby("group", sort=False)[col].apply(mean_std) for col in ["ctrl_gain", "cs_score"]
+        col: per_run_c.groupby("group", sort=False)[col].apply(mean_std) for col in ["ctrl_gain", "reward"]
     }).reindex(group_order)
-    print("\nTABLE C - plain money (ctrl_gain, $) vs the CS goal the agent was trained for (cs_score)")
+    print("\nTABLE C - money (ctrl_gain, $) and total reward, mean +- std over seeds")
     print(table_c.to_string())
-    print("  If full / cs_only rank better on cs_score than on ctrl_gain, they are doing what")
-    print("  they were trained for: 'CS hurts money' is then a design choice, not a failure.")
+    print("  CS useful: full / cs_only earn MORE than r_only / none (they can fit each user's rate).")
+    print("  heuristic_cs shows what a hand-made rule that knows the CS rule can do.")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out = os.path.join(RESULTS_DIR, f"cs_analysis_{args.split}.csv")
+    out = os.path.join(RESULTS_DIR, f"cs_analysis_{args.split}_seed{args.seed}.csv")
     df.to_csv(out, index=False)
     print(f"\nPer-episode results saved to {out}")
 

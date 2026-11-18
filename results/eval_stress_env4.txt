@@ -1,0 +1,64 @@
+=== Evaluation on STRESS split, 300 episodes each, same price paths for every strategy ===
+
+TABLE 1 - main results
+                     N_end  liq_rate  liq_count  risk_adj  ctrl_gain  invalid
+strategy                                                                     
+static               965.6     0.260       1.03     883.1       1.15    0.000
+heuristic            966.7     0.103       0.12     939.1       3.90    0.005
+heuristic_cs         967.3     0.050       0.06     954.5       4.84    0.004
+random               962.9     0.303       0.50     840.1      -4.19    0.199
+borrow_all           959.7     1.000       6.33     168.8     -33.74    0.931
+full_seed42_env4     963.6     0.037       0.04     952.3       3.13    0.000
+full_seed1_env4      958.6     0.103       0.15     905.1       2.47    0.000
+full_seed2_env4      967.7     0.133       0.17     915.7      -2.48    0.000
+full_seed3_env4      965.3     0.003       0.00     964.7       3.94    0.000
+full_seed4_env4      964.1     0.077       0.08     933.3       3.39    0.000
+r_only_seed42_env4   961.6     0.003       0.00     961.3       0.43    0.000
+r_only_seed1_env4    963.2     0.063       0.06     942.4       1.51    0.000
+r_only_seed2_env4    965.8     0.063       0.07     939.6       2.17    0.000
+r_only_seed3_env4    958.7     0.160       0.23     880.8       0.90    0.000
+r_only_seed4_env4    956.9     0.210       0.25     831.7      -4.51    0.000
+cs_only_seed42_env4  965.4     0.003       0.00     963.5       5.11    0.000
+cs_only_seed1_env4   966.4     0.217       0.35     864.0       0.26    0.000
+cs_only_seed2_env4   966.0     0.007       0.01     964.5       4.51    0.000
+cs_only_seed3_env4   966.3     0.017       0.02     952.5       3.75    0.000
+cs_only_seed4_env4   964.8     0.007       0.01     962.9       4.54    0.000
+none_seed42_env4     963.1     0.003       0.00     961.2       2.42    0.000
+none_seed1_env4      950.8     0.073       0.07     936.8     -11.02    0.000
+none_seed2_env4      965.3     0.033       0.09     954.4       3.93    0.000
+none_seed3_env4      961.0     0.080       0.08     921.5       2.27    0.000
+none_seed4_env4      965.4     0.043       0.10     956.2       4.19    0.000
+
+TABLE 2 - behaviour (high risk = R > 5% chance of liquidation within 5 days, measured before acting)
+                     proactive  normal  pro_gap  high_risk  hf_lt_1.1  int_earned  int_paid  end_debt  idle_eth
+strategy                                                                                                       
+static                   0.000   0.000    0.000      0.139      0.033        9.63      4.44     320.0       0.0
+heuristic                0.211   0.000    0.211      0.103      0.005       11.01      5.88     471.0       0.0
+heuristic_cs             0.209   0.031    0.178      0.052      0.003        7.88      2.45     222.0       0.0
+random                   0.374   0.356    0.018      0.096      0.064        7.83      5.80     524.0     216.0
+borrow_all               0.000   0.000    0.000      0.650      0.285       10.78      2.93      66.0       0.0
+full_seed42_env4         0.730   0.104    0.626      0.045      0.005       11.37      7.61     685.0       6.0
+full_seed1_env4          0.748   0.372    0.376      0.087      0.011        9.60      5.05     393.0      93.0
+full_seed2_env4          0.680   0.375    0.305      0.070      0.059        9.11      8.22     675.0     207.0
+full_seed3_env4          0.910   0.295    0.615      0.005      0.000        6.71      2.75     160.0     189.0
+full_seed4_env4          0.564   0.110    0.454      0.040      0.004        9.67      5.19     418.0      61.0
+r_only_seed42_env4       0.437   0.187    0.250      0.005      0.008        6.08      5.56     565.0     245.0
+r_only_seed1_env4        0.785   0.326    0.460      0.016      0.008        7.54      5.18     397.0      64.0
+r_only_seed2_env4        0.800   0.414    0.386      0.042      0.016        5.94      2.60     228.0     258.0
+r_only_seed3_env4        0.685   0.118    0.567      0.114      0.020       10.37      6.16     466.0      59.0
+r_only_seed4_env4        0.837   0.405    0.431      0.085      0.028       10.53      8.77     799.0      91.0
+cs_only_seed42_env4      0.911   0.371    0.539      0.005      0.000        6.20      1.04      77.0       1.0
+cs_only_seed1_env4       0.551   0.270    0.282      0.141      0.025       11.61      6.38     488.0      10.0
+cs_only_seed2_env4       0.610   0.436    0.174      0.009      0.001        6.62      2.06     196.0      39.0
+cs_only_seed3_env4       0.803   0.402    0.401      0.022      0.002       10.11      5.64     513.0       7.0
+cs_only_seed4_env4       0.937   0.352    0.585      0.015      0.001        9.37      4.76     377.0      28.0
+none_seed42_env4         0.766   0.458    0.308      0.007      0.003        8.85      6.35     537.0      38.0
+none_seed1_env4          0.373   0.391   -0.018      0.034      0.410       14.74     22.61    2554.0      34.0
+none_seed2_env4          0.486   0.068    0.418      0.024      0.005        9.39      4.89     407.0       8.0
+none_seed3_env4          0.910   0.397    0.514      0.049      0.007       10.67      6.62     566.0      56.0
+none_seed4_env4          0.093   0.043    0.050      0.035      0.005        8.95      4.29     331.0      24.0
+
+How to read: pro_gap > 0 means it de-risks MORE when risk is high (real reaction to risk).
+ctrl_gain = int_earned - int_paid + liquidation loss.
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\eval_stress.csv

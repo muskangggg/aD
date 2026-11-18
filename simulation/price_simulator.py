@@ -1,40 +1,34 @@
 """
-price_simulator.py  (v3 -- train / validation / test split)
+price_simulator.py  (v4 -- calm / stormy markets + crash jumps, stress split)
 
-v3.1: GBM uses zero drift by default (see GBM_ZERO_DRIFT).
-v3: added a VALIDATION split for tuning. Splits by time:
-    - "train": first 70% of days   -> training
-    - "val"  : next 10% of days    -> tuning (gamma, alpha, beta, ...)
-    - "test" : last 20% of days    -> final results only, used ONCE
-  The test period is unchanged from v2. GBM is calibrated on train only.
+What changed in v4 (6 Nov, upgrade plan Step 2):
+  The new Risk Signal R uses VOLATILITY to say how fast danger is coming.
+  That only helps if the market's speed actually CHANGES during training.
+  v3's synthetic paths always moved at the same speed (one fixed sigma),
+  so knowing the speed was useless.
 
---- v2 notes below ---
-
-Builds the "Simulated / Backtest Env" price source: each episode gets a
-price path that's either (a) a real historical window sampled from actual
-ETH price data, or (b) a synthetic path generated via Geometric Brownian
-Motion (GBM) calibrated to that real data's drift and volatility.
-
-What changed in v2 -- TRAIN / TEST SPLIT:
-  The price history is split by time:
-    - "train": the first TRAIN_FRAC (80%) of days
-    - "test" : the last 20% of days, never seen during training
-  Real windows are only sampled from the chosen split, and GBM is ALWAYS
-  calibrated on the train part only, so no information from the test
-  period leaks into training. Splitting by time (not randomly) matters for
-  price data: a random split would let training windows overlap the test
-  days.
-
-Mixing: episodes mix real and synthetic paths with probability
-MIX_REAL_PROB (default 70% real / 30% GBM).
+  1. REGIME-SWITCHING GBM: each synthetic day is either CALM or STORMY.
+        calm   : sigma = SIGMA_CALM_MULT  x train sigma  (0.6x)
+        stormy : sigma = SIGMA_STORM_MULT x train sigma  (2.0x)
+     The regime switches randomly (Markov chain):
+        calm -> stormy with prob P_CALM_TO_STORM per day (1/30: calm lasts ~30 days)
+        stormy -> calm with prob P_STORM_TO_CALM per day (1/10: storms last ~10 days)
+     So about 25% of synthetic days are stormy (Hamilton 1989 style regimes).
+  2. CRASH JUMPS: on any day, with prob JUMP_PROB (1/90, about one per
+     episode), the price drops by 10-25% in one day.
+  3. ZERO EXPECTED DRIFT is kept (like v3.1): a small daily compensation is
+     added so that, on average, the price neither rises nor falls. No free trend.
+  4. TRAINING mix 0.7 -> 0.5 real (MIX_REAL_PROB_TRAIN): half the training
+     episodes are synthetic, so the agent sees enough storms and crashes.
+     VAL / TEST keep the old 70% real / 30% synthetic mix (MIX_REAL_PROB_EVAL).
+  5. NEW SPLIT "stress" (for evaluation only): every episode is synthetic,
+     STARTS stormy and has 3x more crashes. Starting prices are taken from
+     the VAL period. Use: python evaluate.py --split stress
+  Real price windows are unchanged. GBM is still calibrated on TRAIN only.
+  USE_REGIME_GBM = False gives the v3 single-sigma GBM back.
 
 Usage:
-    python simulation/price_simulator.py   # demo of both splits
-
-As a module:
-    from price_simulator import PriceSimulator
-    sim = PriceSimulator("../data/raw/eth_daily.csv", split="train")
-    path = sim.get_episode_path(episode_length=90)
+    python simulation/price_simulator.py   # demo of all splits
 """
 
 import os
@@ -43,16 +37,23 @@ import pandas as pd
 
 RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 
-MIX_REAL_PROB = 0.7          # probability an episode uses a real historical window vs. GBM
-DEFAULT_EPISODE_LENGTH = 90  # days per episode
-TRAIN_FRAC = 0.7             # first 70% of days = train
-VAL_FRAC = 0.1               # next 10% = validation (tuning); last 20% = test
-SPLITS = ("train", "val", "test", "all")
-# GBM drift: the train period happened to be a rising market (~+18%/yr).
-# Copying that drift teaches the agent that "ETH goes up, borrowing is safe".
-# With GBM_ZERO_DRIFT the synthetic paths have zero expected price change
-# (volatility is still calibrated on train), so they don't assume a direction.
+MIX_REAL_PROB_TRAIN = 0.5    # v4: was 0.7
+MIX_REAL_PROB_EVAL = 0.7     # val / test: unchanged
+DEFAULT_EPISODE_LENGTH = 90
+TRAIN_FRAC = 0.7
+VAL_FRAC = 0.1
+SPLITS = ("train", "val", "test", "stress", "all")
 GBM_ZERO_DRIFT = True
+
+# ---- v4: regimes and jumps ----
+USE_REGIME_GBM = True
+SIGMA_CALM_MULT = 0.6
+SIGMA_STORM_MULT = 2.0
+P_CALM_TO_STORM = 1 / 30
+P_STORM_TO_CALM = 1 / 10
+JUMP_PROB = 1 / 90
+JUMP_MIN, JUMP_MAX = 0.10, 0.25      # one-day crash size (price falls 10%-25%)
+STRESS_JUMP_MULT = 3.0               # stress split: 3x more crashes, starts stormy
 
 
 class PriceSimulator:
@@ -66,13 +67,14 @@ class PriceSimulator:
         all_dates = df["date"].values
         n = len(all_prices)
         train_end = int(round(n * train_frac))
-        val_end = int(round(n * (train_frac + val_frac)))  # round() avoids 0.7+0.1=0.7999.. shifting the test start
+        val_end = int(round(n * (train_frac + val_frac)))
 
         bounds = {
             "train": (0, train_end),
             "val": (train_end, val_end),
             "test": (val_end, n),
-            "all": (0, n),  # old behaviour, kept only for comparison
+            "stress": (train_end, val_end),   # start-price levels only (all paths synthetic)
+            "all": (0, n),
         }
         start, end = bounds[split]
 
@@ -80,68 +82,111 @@ class PriceSimulator:
         self.train_prices = all_prices[:train_end]
         self.prices = all_prices[start:end]
         self.dates = all_dates[start:end]
-
         self.rng = np.random.default_rng(seed)
 
-        # GBM is always calibrated on TRAIN data only (no test leakage)
+        # GBM is always calibrated on TRAIN data only (no leakage)
         self.calibrated_mu_daily, self.sigma_daily = self._calibrate_gbm(self.train_prices)
         self.mu_daily = 0.0 if GBM_ZERO_DRIFT else self.calibrated_mu_daily
 
+        self.jump_prob = JUMP_PROB * (STRESS_JUMP_MULT if split == "stress" else 1.0)
+        self.last_regimes = None   # regimes of the last synthetic path (for checks), None for real
+
     @staticmethod
     def _calibrate_gbm(prices: np.ndarray) -> tuple[float, float]:
-        """Estimate daily drift (mu) and volatility (sigma) from historical
-        log returns -- these become the GBM parameters."""
         log_returns = np.diff(np.log(prices))
         return log_returns.mean(), log_returns.std()
 
     def _simulate_gbm_path(self, n_steps: int, s0: float | None = None) -> np.ndarray:
-        """Generate one synthetic price path via GBM."""
+        """v3 single-sigma GBM (used when USE_REGIME_GBM = False)."""
         if s0 is None:
-            s0 = float(self.rng.choice(self.prices))  # start from a plausible price level of this split
+            s0 = float(self.rng.choice(self.prices))
+        shocks = self.rng.normal(loc=(self.mu_daily - 0.5 * self.sigma_daily ** 2),
+                                 scale=self.sigma_daily, size=n_steps)
+        self.last_regimes = np.zeros(n_steps, dtype=int)
+        return np.concatenate([[s0], s0 * np.exp(np.cumsum(shocks))])
 
-        # GBM: S_t = S_0 * exp((mu - 0.5*sigma^2)*t + sigma*W_t)
-        shocks = self.rng.normal(
-            loc=(self.mu_daily - 0.5 * self.sigma_daily ** 2),
-            scale=self.sigma_daily,
-            size=n_steps,
-        )
-        path = s0 * np.exp(np.cumsum(shocks))
-        return np.concatenate([[s0], path])  # include starting price
+    def _jump_compensation(self) -> float:
+        """Daily log-drift that cancels the expected effect of crash jumps,
+        so E[price tomorrow / price today] = 1 (zero expected drift)."""
+        u = np.linspace(JUMP_MIN, JUMP_MAX, 1001)          # crash sizes, uniform
+        mean_factor = np.mean(1.0 - u)                     # E[e^J]
+        return -np.log(1.0 - self.jump_prob + self.jump_prob * mean_factor)
+
+    def _simulate_regime_path(self, n_steps: int, s0: float | None = None,
+                              start_stormy: bool | None = None) -> np.ndarray:
+        """v4: calm / stormy regimes + crash jumps, zero expected drift."""
+        if s0 is None:
+            s0 = float(self.rng.choice(self.prices))
+        if start_stormy is None:
+            stationary_storm = P_CALM_TO_STORM / (P_CALM_TO_STORM + P_STORM_TO_CALM)
+            start_stormy = self.rng.random() < stationary_storm
+
+        comp = self._jump_compensation() + self.mu_daily
+        regimes = np.zeros(n_steps, dtype=int)
+        log_ret = np.zeros(n_steps)
+        stormy = bool(start_stormy)
+        for t in range(n_steps):
+            regimes[t] = int(stormy)
+            sigma = self.sigma_daily * (SIGMA_STORM_MULT if stormy else SIGMA_CALM_MULT)
+            r = self.rng.normal(-0.5 * sigma ** 2, sigma) + comp
+            if self.rng.random() < self.jump_prob:
+                r += np.log(1.0 - self.rng.uniform(JUMP_MIN, JUMP_MAX))
+            log_ret[t] = r
+            switch_p = P_STORM_TO_CALM if stormy else P_CALM_TO_STORM
+            if self.rng.random() < switch_p:
+                stormy = not stormy
+        self.last_regimes = regimes
+        return np.concatenate([[s0], s0 * np.exp(np.cumsum(log_ret))])
+
+    def _synthetic_path(self, n_steps: int) -> np.ndarray:
+        if self.split == "stress":
+            return self._simulate_regime_path(n_steps, start_stormy=True)
+        if USE_REGIME_GBM:
+            return self._simulate_regime_path(n_steps)
+        return self._simulate_gbm_path(n_steps)
 
     def _sample_real_window(self, n_steps: int) -> np.ndarray:
-        """Pick a random contiguous window of real prices from this split."""
         max_start = len(self.prices) - (n_steps + 1)
         if max_start <= 0:
-            # not enough history in this split for this length -- fall back to GBM
-            return self._simulate_gbm_path(n_steps)
+            return self._synthetic_path(n_steps)
         start = self.rng.integers(0, max_start + 1)
+        self.last_regimes = None
         return self.prices[start:start + n_steps + 1]
 
     def get_episode_path(self, episode_length: int = DEFAULT_EPISODE_LENGTH,
-                         mix_real_prob: float = MIX_REAL_PROB) -> np.ndarray:
-        """Return one price path (length episode_length+1, including the
-        starting price) for a single episode."""
+                         mix_real_prob: float | None = None) -> np.ndarray:
+        if mix_real_prob is None:
+            mix_real_prob = MIX_REAL_PROB_TRAIN if self.split == "train" else MIX_REAL_PROB_EVAL
+        if self.split == "stress":
+            return self._synthetic_path(episode_length)
         if self.rng.random() < mix_real_prob:
             return self._sample_real_window(episode_length)
-        return self._simulate_gbm_path(episode_length)
+        return self._synthetic_path(episode_length)
 
 
 def main():
     price_path = os.path.join(RAW_DIR, "eth_daily.csv")
-
-    for split in ("train", "val", "test"):
+    for split in ("train", "val", "test", "stress"):
         sim = PriceSimulator(price_path, seed=42, split=split)
         print(f"=== {split.upper()} split ===")
-        print(f"  days in split:   {len(sim.prices)}")
-        print(f"  date range:      {str(sim.dates[0])[:10]} to {str(sim.dates[-1])[:10]}")
-        print(f"  GBM volatility (train-calibrated): {sim.sigma_daily * np.sqrt(365):.4f}, "
-              f"drift used: {sim.mu_daily * 365:.4f} (train drift was {sim.calibrated_mu_daily * 365:.4f})")
-        print(f"  3 sample episodes (length={DEFAULT_EPISODE_LENGTH} days):")
+        print(f"  days in split: {len(sim.prices)}  ({str(sim.dates[0])[:10]} to {str(sim.dates[-1])[:10]})")
+        print(f"  train daily sigma {sim.sigma_daily:.4f} -> calm {sim.sigma_daily * SIGMA_CALM_MULT:.4f}, "
+              f"stormy {sim.sigma_daily * SIGMA_STORM_MULT:.4f}; crash prob/day {sim.jump_prob:.4f}")
         for i in range(3):
             path = sim.get_episode_path()
-            pct = (path[-1] / path[0] - 1) * 100
-            print(f"    episode {i+1}: start=${path[0]:.2f}  end=${path[-1]:.2f}  change={pct:+.1f}%")
+            kind = "real" if sim.last_regimes is None else f"synthetic, {sim.last_regimes.mean():.0%} stormy days"
+            print(f"    episode {i + 1}: change {(path[-1] / path[0] - 1) * 100:+6.1f}%  ({kind})")
         print()
+
+    # Check: zero expected drift and the stormy share of synthetic days
+    sim = PriceSimulator(price_path, seed=0, split="train")
+    ends, storm = [], []
+    for _ in range(4000):
+        p = sim._simulate_regime_path(DEFAULT_EPISODE_LENGTH)
+        ends.append(p[-1] / p[0])
+        storm.append(sim.last_regimes.mean())
+    print(f"Check: mean price change over 90 days = {(np.mean(ends) - 1) * 100:+.1f}% (should be near 0), "
+          f"stormy days = {np.mean(storm):.0%} (should be near 25%)")
 
 
 if __name__ == "__main__":
