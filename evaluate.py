@@ -1,5 +1,5 @@
 """
-evaluate.py  (v3.2 -- env v4: CS-based rates, new R, stress split, action counts)
+evaluate.py  (v3.3 -- env v4.1: CS-based rates, new R, stress split, action counts, action fee)
 
 Runs every strategy on the SAME price paths (same seed -> same paths and
 same credit scores for everyone, because actions never use the env's random
@@ -24,6 +24,11 @@ What changed in v3 (6 Nov, env v4):
     trained agent learned to avoid "borrow_ETH" (it costs interest and the
     borrowed ETH earns nothing in the wallet). Saved to
     results/actions_<split>_seed<seed>.csv
+  - v3.3 (18 Nov): --fee X evaluates EVERY strategy (baselines too) in the
+    world where each real action costs $X (env v4.1). ctrl_gain subtracts
+    the fees; new column "fees" in TABLE 2. Output files get _feeX in the
+    name, so the fee-free results are never overwritten.
+    Compare fee-trained agents with the baselines in the SAME fee world.
 
 Strategies:
   - static       : never rebalances
@@ -42,6 +47,7 @@ Usage:
     python evaluate.py --runs full_seed42_env4 none_seed42_env4 --episodes 300
     python evaluate.py --runs ... --split stress --episodes 300
     python evaluate.py --runs ... --split test          # FINAL results only, run once
+    python evaluate.py --runs cs_only_seed42_env4_fee0.05 --fee 0.05   # fee world
 Per-episode results are saved to results/eval_<split>_seed<seed>.csv
 """
 
@@ -120,8 +126,8 @@ def make_dqn_policy(run_name: str, n_obs: int, n_actions: int):
     return act
 
 
-def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
-    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
+def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED, fee=0.0):
+    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs, action_fee=fee)
     rows = []
     for _ in range(episodes):
         obs, info = env.reset()
@@ -149,7 +155,7 @@ def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
             else:
                 c["normal_steps"] += 1
                 c["normal_derisk"] += int(worked_derisk)
-            ctrl += info["interest_usd"] + info["liquidation_loss_usd"]
+            ctrl += info["interest_usd"] + info["liquidation_loss_usd"] - info["fee_usd"]
             paid += env.last_paid
             earned += env.last_earned
             done = terminated or truncated
@@ -166,6 +172,7 @@ def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
             "ctrl_gain": ctrl,
             "int_earned": earned,
             "int_paid": paid,
+            "fees": info["fees_paid_usd"],
             "end_debt": info["debt_usd"],
             "idle_eth": idle_eth / c["steps"],
             **c,
@@ -196,7 +203,7 @@ def summarise(results: pd.DataFrame, order: list[str]) -> tuple[pd.DataFrame, pd
     behaviour["pro_gap"] = behaviour["proactive"] - behaviour["normal"]
     behaviour["high_risk"] = sums["high_steps"] / sums["steps"]
     behaviour[f"hf_lt_{LOW_HF}"] = sums["low_hf_steps"] / sums["steps"]
-    means = g[["int_earned", "int_paid", "end_debt", "idle_eth"]].mean().reindex(order)
+    means = g[["int_earned", "int_paid", "fees", "end_debt", "idle_eth"]].mean().reindex(order)
     behaviour = behaviour.join(means)
     return main_table, behaviour
 
@@ -220,6 +227,8 @@ def main():
     p.add_argument("--episodes", type=int, default=200)
     p.add_argument("--seed", type=int, default=EVAL_SEED,
                    help="evaluation seed (users + price paths); use a different one for TEST, e.g. 3031")
+    p.add_argument("--fee", type=float, default=0.0,
+                   help="v3.3: $ fee per real action for EVERY strategy (env v4.1); 0 = off")
     args = p.parse_args()
 
     rng = np.random.default_rng(0)
@@ -241,8 +250,8 @@ def main():
     if args.split == "test":
         print("!!! TEST split: use this only for the FINAL results, not for tuning !!!\n")
     print(f"=== Evaluation on {args.split.upper()} split, {args.episodes} episodes each, seed {args.seed}, "
-          f"same price paths for every strategy ===\n")
-    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes, args.seed)
+          f"fee ${args.fee:g} per action, same price paths for every strategy ===\n")
+    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes, args.seed, args.fee)
                          for n, pol, r, cs in strategies], ignore_index=True)
 
     order = [s[0] for s in strategies]
@@ -255,9 +264,9 @@ def main():
                             "ctrl_gain": 2, "invalid": 3}).to_string())
     print(f"\nTABLE 2 - behaviour (high risk = R > {SAFE_RISK_THRESHOLD:.0%} chance of liquidation "
           f"within 5 days, measured before acting)")
-    print(behaviour.round(3).round({"int_earned": 2, "int_paid": 2, "end_debt": 0, "idle_eth": 0}).to_string())
+    print(behaviour.round(3).round({"int_earned": 2, "int_paid": 2, "fees": 2, "end_debt": 0, "idle_eth": 0}).to_string())
     print("\nHow to read: pro_gap > 0 means it de-risks MORE when risk is high (real reaction to risk).")
-    print("ctrl_gain = int_earned - int_paid + liquidation loss.")
+    print("ctrl_gain = int_earned - int_paid - fees + liquidation loss.")
 
     print("\nTABLE 3 - action frequency (% of all steps the action was CHOSEN; each row sums to 100)")
     print((chosen * 100).round(1).to_string())
@@ -267,9 +276,10 @@ def main():
           "and borrowed ETH earns nothing in the wallet).")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out = os.path.join(RESULTS_DIR, f"eval_{args.split}_seed{args.seed}.csv")
+    tag = f"_fee{args.fee:g}" if args.fee > 0 else ""
+    out = os.path.join(RESULTS_DIR, f"eval_{args.split}_seed{args.seed}{tag}.csv")
     results.to_csv(out, index=False)
-    act_out = os.path.join(RESULTS_DIR, f"actions_{args.split}_seed{args.seed}.csv")
+    act_out = os.path.join(RESULTS_DIR, f"actions_{args.split}_seed{args.seed}{tag}.csv")
     pd.concat({"chosen": chosen, "valid": valid}, axis=1).to_csv(act_out)
     print(f"\nPer-episode results saved to {out}")
     print(f"Action frequency saved to {act_out}")

@@ -1,5 +1,9 @@
 """
-cs_analysis.py  (v2 -- for env v4; read-only, no training)
+cs_analysis.py  (v2.1 -- for env v4.1; read-only, no training)
+
+v2.1 (18 Nov): --fee X runs every strategy in the world where each real
+action costs $X (env v4.1, same as evaluate.py --fee). ctrl_gain subtracts
+the fees. Output file gets _feeX in the name.
 
 v2 (6 Nov): env v4 gives low-CS users a HIGHER borrow rate (2% + 6% x (1 - CS)),
 so the best plan now really depends on CS: low CS -> repay / keep debt small,
@@ -7,8 +11,7 @@ high CS -> borrowing pays. cs_score is replaced by the real env reward
 (v4 has no m(CS) weight), and heuristic_cs (knows the CS rule) is added.
 
 QUESTION: does the Credit Score CS make the agent treat users DIFFERENTLY?
-  If CS works as designed (losses weigh 1.5 - CS, gains 0.5 + CS), an agent
-  that SEES CS should:
+  If CS works as designed, an agent that SEES CS should:
      low-CS user  -> play safe : higher HF, less debt
      high-CS user -> play bold : lower HF, more debt
   Agents that do NOT see CS (r_only, none) are the CONTROL GROUP: their
@@ -24,7 +27,7 @@ WHAT IT DOES:
      avg_hf    : average HF over the 90 days (capped at 5, before each action)
      min_hf    : lowest HF in the episode
      avg_debt  : average debt in $ over the 90 days
-     ctrl_gain : interest + liquidation loss in $ (same as evaluate.py)
+     ctrl_gain : interest + liquidation loss - fees in $ (same as evaluate.py)
      reward    : total env reward (the goal every agent was trained for)
 
 PRINTS:
@@ -36,12 +39,11 @@ PRINTS:
             control groups r_only / none.
   TABLE C - money and reward, per group
 
-Does NOT overwrite results/eval_<split>.csv. Saves results/cs_analysis_<split>.csv.
+Does NOT overwrite results/eval_<split>.csv. Saves results/cs_analysis_<split>_seed<seed>[_feeX].csv.
 
 Usage:
-    python cs_analysis.py --runs full_seed42_lr1e4 full_seed1_lr1e4 full_seed2_lr1e4 \
-        r_only_seed42 r_only_seed1 r_only_seed2 cs_only_seed42 cs_only_seed1 cs_only_seed2 \
-        none_seed42 none_seed1 none_seed2 --episodes 300
+    python cs_analysis.py --runs full_seed42_env4 cs_only_seed42_env4 none_seed42_env4 --episodes 300
+    python cs_analysis.py --runs cs_only_seed42_env4_fee0.05 --episodes 300 --fee 0.05
 """
 
 import argparse
@@ -58,8 +60,8 @@ from lending_env import HOLD_ACTION, HF_CLIP, heuristic_policy, heuristic_cs_pol
 CS_LABELS = ["low", "mid", "high"]
 
 
-def run_strategy(name, group, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED):
-    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs)
+def run_strategy(name, group, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED, fee=0.0):
+    env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs, action_fee=fee)
     rows = []
     for ep in range(episodes):
         obs, info = env.reset()
@@ -73,7 +75,7 @@ def run_strategy(name, group, policy, use_r, use_cs, split, episodes, seed=EVAL_
             debts.append(info["debt_usd"])
             a = policy(obs, info)
             obs, reward, terminated, truncated, info = env.step(a)
-            money = info["interest_usd"] + info["liquidation_loss_usd"]
+            money = info["interest_usd"] + info["liquidation_loss_usd"] - info["fee_usd"]
             ctrl += money
             total_reward += reward
             done = terminated or truncated
@@ -105,6 +107,7 @@ def main():
     p.add_argument("--split", default="val", choices=["train", "val", "test", "stress"])
     p.add_argument("--episodes", type=int, default=300)
     p.add_argument("--seed", type=int, default=EVAL_SEED, help="use the same seed as evaluate.py")
+    p.add_argument("--fee", type=float, default=0.0, help="$ fee per real action (env v4.1); 0 = off")
     args = p.parse_args()
 
     probe = EvalEnv(seed=args.seed, split=args.split)
@@ -121,8 +124,8 @@ def main():
         strategies.append((run, variant, make_dqn_policy(run, n_obs, n_actions), use_r, use_cs))
 
     print(f"=== CS analysis on {args.split.upper()} split, {args.episodes} episodes each, seed {args.seed}, "
-          f"same price paths and users as evaluate.py ===")
-    df = pd.concat([run_strategy(n, g, pol, r, c, args.split, args.episodes, args.seed)
+          f"fee ${args.fee:g} per action, same price paths and users as evaluate.py ===")
+    df = pd.concat([run_strategy(n, g, pol, r, c, args.split, args.episodes, args.seed, args.fee)
                     for n, g, pol, r, c in strategies], ignore_index=True)
 
     # Same users for every strategy -> cut CS into 3 equal-size groups once
@@ -184,7 +187,8 @@ def main():
     print("  heuristic_cs shows what a hand-made rule that knows the CS rule can do.")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out = os.path.join(RESULTS_DIR, f"cs_analysis_{args.split}_seed{args.seed}.csv")
+    tag = f"_fee{args.fee:g}" if args.fee > 0 else ""
+    out = os.path.join(RESULTS_DIR, f"cs_analysis_{args.split}_seed{args.seed}{tag}.csv")
     df.to_csv(out, index=False)
     print(f"\nPer-episode results saved to {out}")
 

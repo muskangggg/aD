@@ -1,0 +1,56 @@
+=== CS analysis on VAL split, 300 episodes each, seed 2026, fee $0.05 per action, same price paths and users as evaluate.py ===
+
+CS groups (equal size): low 0.25-0.41 | mid 0.41-0.61 | high 0.61-0.97
+
+TABLE A - behaviour per CS group (mean over seeds)
+  CS working: for full / cs_only, avg_hf falls and avg_debt rises from low -> high CS.
+  Control (r_only / none): rows should look about the same (they can't see CS).
+                       avg_hf  min_hf  avg_debt  ctrl_gain  liq_rate
+group        cs_group                                               
+static       low        1.958   1.327     403.0       4.11     0.010
+             mid        1.964   1.343     399.0       4.31     0.040
+             high       1.935   1.316     397.0       5.20     0.040
+heuristic    low        1.632   1.161     483.0       3.96     0.000
+             mid        1.627   1.173     483.0       4.60     0.010
+             high       1.629   1.172     475.0       5.54     0.020
+heuristic_cs low        4.930   2.000      11.0       4.59     0.000
+             mid        3.475   1.634     220.0       4.88     0.000
+             high       1.629   1.172     475.0       5.54     0.020
+cs_only      low        2.642   1.473     425.0       0.01     0.007
+             mid        2.515   1.414     544.0      -0.27     0.010
+             high       2.058   1.286     633.0      -0.10     0.038
+
+TABLE B - per run: does behaviour follow CS?
+       group                    strategy  corr_cs_debt  corr_cs_hf  debt_high_minus_low  hf_high_minus_low
+      static                      static        -0.966       0.022               -5.536             -0.023
+   heuristic                   heuristic        -0.107      -0.010               -7.426             -0.003
+heuristic_cs                heuristic_cs         0.614      -0.744              464.108             -3.301
+     cs_only         cs_only_seed42_env4         0.710      -0.775              337.127             -2.284
+     cs_only          cs_only_seed1_env4         0.378      -0.619               50.052             -0.180
+     cs_only          cs_only_seed2_env4        -0.279       0.362               10.862              0.074
+     cs_only cs_only_seed42_env4_fee0.05         0.762      -0.725              285.746             -0.539
+     cs_only  cs_only_seed1_env4_fee0.05         0.450      -0.794              431.990             -0.555
+     cs_only  cs_only_seed2_env4_fee0.05         0.413      -0.387              137.215             -0.023
+
+TABLE B (summary) - mean +- std over seeds
+               corr_cs_debt     corr_cs_hf debt_high_minus_low hf_high_minus_low
+group                                                                           
+static                -0.97          +0.02               -5.54             -0.02
+heuristic             -0.11          -0.01               -7.43             -0.00
+heuristic_cs          +0.61          -0.74             +464.11             -3.30
+cs_only       +0.41 +- 0.37  -0.49 +- 0.44   +208.83 +- 168.35     -0.58 +- 0.87
+  CS working: corr_cs_debt > 0 and corr_cs_hf < 0 for full / cs_only, clearly bigger than for r_only / none.
+  Note: even the control can show a small correlation, because the same users always meet
+  the same price paths. That is why we compare WITH-CS agents against the control, not against 0.
+
+TABLE C - money (ctrl_gain, $) and total reward, mean +- std over seeds
+                  ctrl_gain          reward
+group                                      
+static                +4.54          +41.91
+heuristic             +4.70          +46.36
+heuristic_cs          +5.00          +49.52
+cs_only       -0.12 +- 3.53  -2.21 +- 35.84
+  CS useful: full / cs_only earn MORE than r_only / none (they can fit each user's rate).
+  heuristic_cs shows what a hand-made rule that knows the CS rule can do.
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\cs_analysis_val_seed2026_fee0.05.csv

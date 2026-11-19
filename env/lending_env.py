@@ -1,10 +1,28 @@
 """
-lending_env.py  (v4 -- credit-based loan terms + forward-looking Risk Signal)
+lending_env.py  (v4.1 -- credit-based loan terms + forward-looking Risk Signal + optional action fee)
 
 Gymnasium environment for the DQN agent -- simulates a single borrower
 position on an Aave-style lending pool across a mixed real/synthetic ETH
 price path, with the Risk Signal R in the state and the Credit Score CS
 setting the user's loan terms.
+
+What changed in v4.1 (18 Nov, improvement plan item 1):
+  ACTION FEE (like gas). The 18 Nov evaluation with action counts showed the
+  agents act very often because actions are free: none_seed42 did
+  borrow_USDC 34% and repay_USDC 33% of all days (flip-flopping), and even
+  full_seed42 acted on ~28% of days.
+  Now every action that DOES something (valid, not hold) costs
+  action_fee dollars (default 0 = OFF = exactly v4).
+      - the fee is real money: it lowers net worth (self.fees_paid) and is
+        part of wealth_change, so it enters the reward (ALPHA x) and
+        ctrl_gain.
+      - blocked / invalid actions and hold cost nothing.
+      - suggested value: $0.05. Why so small: a $100 borrow for a high-CS
+        user earns only ~$0.30 over a whole episode, and a $100 repay for a
+        low-CS user saves only ~$0.20, so a big fee (e.g. $0.50) would kill
+        every useful action, not only the useless ones.
+  Turn on with LendingEnv(action_fee=0.05) or training_loop.py --fee 0.05.
+  With action_fee = 0 nothing changes, so all v4 runs and results stay valid.
 
 What changed in v4 (6 Nov, upgrade plan, approved by the supervisor):
   Step 1 (cs_analysis.py) and the 30 Oct ablation showed that neither R
@@ -27,7 +45,7 @@ What changed in v4 (6 Nov, upgrade plan, approved by the supervisor):
      hold USDC EARNS a spread; for a low-CS user it LOSES money and repaying
      is better. The best action now depends on CS.
   2. NO CS REWARD WEIGHT (USE_CS_REWARD_WEIGHT = False): reward is now
-         ALPHA * (interest + liquidation loss) - BETA per liquidation
+         ALPHA * (interest + liquidation loss - fee) - BETA per liquidation
      The old m(CS) multiplier (0.5+CS gains / 1.5-CS losses) is kept in the
      code but off. CS now acts through the loan, not through the reward.
   3. FORWARD-LOOKING RISK SIGNAL R (compute_risk_signal v3):
@@ -121,6 +139,9 @@ ALPHA = 10.0
 BETA = 50.0
 INVALID_ACTION_PENALTY = 0.01
 
+# ---- v4.1: action fee (like gas), in USD per action that does something ----
+DEFAULT_ACTION_FEE = 0.0       # 0 = off (= v4). Suggested experiment: 0.05
+
 # ---- optional HF danger-zone penalty (v3.3 experiment, OFF) ----
 HF_BUFFER = 1.15
 DEFAULT_BUFFER_PENALTY = 0.0
@@ -148,6 +169,7 @@ class LendingEnv(gym.Env):
         use_credit_score: bool = True,
         split: str = "train",   # train / val / test / stress
         buffer_penalty: float = DEFAULT_BUFFER_PENALTY,
+        action_fee: float = DEFAULT_ACTION_FEE,   # v4.1
     ):
         super().__init__()
 
@@ -163,6 +185,7 @@ class LendingEnv(gym.Env):
         self.use_risk_signal = use_risk_signal
         self.use_credit_score = use_credit_score
         self.buffer_penalty = float(buffer_penalty)
+        self.action_fee = float(action_fee)
 
         self.action_space = spaces.Discrete(HOLD_ACTION + 1)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(12,), dtype=np.float32)
@@ -175,6 +198,7 @@ class LendingEnv(gym.Env):
         self.debt = {a: 0.0 for a in ASSETS}
         self.credit_score = 0.5
         self.liquidation_count = 0
+        self.fees_paid = 0.0                               # v4.1: total fees this episode
         self.var_daily = self.price_sim.sigma_daily ** 2   # EWMA variance (v4)
 
     # ---------- value helpers ----------
@@ -187,7 +211,8 @@ class LendingEnv(gym.Env):
         return sum(balances[a] * self._price(a) for a in ASSETS)
 
     def _net_worth(self) -> float:
-        return self._usd(self.wallet) + self._usd(self.collateral) - self._usd(self.debt)
+        # v4.1: fees already paid are money that left the user
+        return self._usd(self.wallet) + self._usd(self.collateral) - self._usd(self.debt) - self.fees_paid
 
     @staticmethod
     def _health_factor(collateral_usd: float, debt_usd: float) -> float:
@@ -366,6 +391,7 @@ class LendingEnv(gym.Env):
         sampled_wallet = self.wallet_scores.sample(1, random_state=self.rng.integers(0, 1_000_000)).iloc[0]
         self.credit_score = float(sampled_wallet["credit_score"])
         self.liquidation_count = 0
+        self.fees_paid = 0.0
 
         return self._build_observation(), self._info()
 
@@ -379,13 +405,19 @@ class LendingEnv(gym.Env):
             "health_factor": self._health_factor(collateral_usd, debt_usd),
             "credit_score": self.credit_score,
             "borrow_apr_usdc": self.borrow_apr("USDC"),   # v4: the user's CS-based rate
+            "fees_paid_usd": self.fees_paid,               # v4.1: total fees so far
             "action_mask": self.action_mask(),
         }
         info.update(extra)
         return info
 
     def step(self, action: int):
-        valid = self._apply_action(int(action))
+        action = int(action)
+        valid = self._apply_action(action)
+
+        # v4.1: an action that did something costs the fee (hold / blocked = free)
+        fee_usd = self.action_fee if (valid and action != HOLD_ACTION) else 0.0
+        self.fees_paid += fee_usd
 
         self.t += 1                                 # new day: price moves
         log_ret = math.log(self.price_path[self.t] / self.price_path[self.t - 1])
@@ -399,7 +431,7 @@ class LendingEnv(gym.Env):
         liquidation_loss_usd = self._liquidate() if liquidated else 0.0
         self.liquidation_count += int(liquidated)
 
-        wealth_change = interest_usd + liquidation_loss_usd
+        wealth_change = interest_usd + liquidation_loss_usd - fee_usd
         buffer_pen = self._buffer_penalty(hf)
         reward = self._compute_reward(wealth_change, liquidated, valid, buffer_pen)
 
@@ -417,6 +449,7 @@ class LendingEnv(gym.Env):
             invalid_action=not valid,
             interest_usd=interest_usd,
             liquidation_loss_usd=liquidation_loss_usd,
+            fee_usd=fee_usd,                          # v4.1: fee paid this step
             buffer_penalty=buffer_pen,
         )
         return self._build_observation(), reward, terminated, truncated, info
@@ -464,7 +497,7 @@ def _run(env, policy_fn, label, reset=True):
     while True:
         obs, reward, terminated, truncated, info = env.step(policy_fn(info))
         total_reward += reward
-        controllable += info["interest_usd"] + info["liquidation_loss_usd"]
+        controllable += info["interest_usd"] + info["liquidation_loss_usd"] - info["fee_usd"]
         invalid += int(info["invalid_action"])
         min_hf = min(min_hf, info["health_factor"])
         max_r = max(max_r, info["risk_signal"])
@@ -473,8 +506,8 @@ def _run(env, policy_fn, label, reset=True):
     price_chg = (env._price("ETH") / start_price - 1) * 100
     print(f"[{label}] CS={env.credit_score:.2f} rate={env.borrow_apr('USDC'):.1%} "
           f"liquidations={info['liquidation_count']} N: {start_nw:.0f}->{info['net_worth_usd']:.0f} "
-          f"(ETH {price_chg:+.1f}%) controllable={controllable:+.2f} min_HF={min_hf:.2f} "
-          f"max_R={max_r:.2f} invalid={invalid} reward={total_reward:.2f}")
+          f"(ETH {price_chg:+.1f}%) controllable={controllable:+.2f} fees={info['fees_paid_usd']:.2f} "
+          f"min_HF={min_hf:.2f} max_R={max_r:.2f} invalid={invalid} reward={total_reward:.2f}")
     return controllable
 
 
@@ -564,6 +597,31 @@ def main():
     r_storm = env._liquidation_probability()
     print(f"Check 7 - HF 1.30: R calm (3.5%/day) = {r_calm:.2%}, R stormy (7%/day) = {r_storm:.2%} "
           f"(stormy should be much higher)")
+
+    # Check 8 (v4.1): the action fee
+    print("Check 8 - action fee $0.05 (same user, same prices, flat price):")
+    res = {}
+    for fee in (0.0, 0.05):
+        for name in ("hold", "flip-flop"):
+            e = LendingEnv(seed=7, action_fee=fee)
+            e.reset()
+            e.price_path = np.full(len(e.price_path), e.start_price)
+            info = e._info()
+            n_start, total_r = info["net_worth_usd"], 0.0
+            while True:
+                if name == "hold":
+                    a = HOLD_ACTION
+                else:   # borrow on even days, repay on odd days
+                    a = action_id("borrow", "USDC") if e.t % 2 == 0 else action_id("repay", "USDC")
+                _, r, te, tr, info = e.step(a)
+                total_r += r
+                if te or tr:
+                    break
+            res[(fee, name)] = (info["net_worth_usd"] - n_start, info["fees_paid_usd"], total_r)
+    for (fee, name), (dn, fees, tr) in res.items():
+        print(f"   fee {fee:.2f} {name:9s}: net worth change {dn:+.2f}$, fees paid {fees:.2f}$, reward {tr:+.2f}")
+    print("   -> hold: identical with and without fee (fees 0); flip-flop: fees = 90 x 0.05 = 4.50$ "
+          "and net worth lower by exactly that")
 
 
 if __name__ == "__main__":

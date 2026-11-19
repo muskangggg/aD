@@ -1,7 +1,14 @@
 """
-training_loop.py  (v4)
+training_loop.py  (v4.1)
 
 Step 8: the training loop, on top of Step 7's DQNAgent.
+
+What changed in v4.1 (18 Nov, env v4.1):
+  - --fee X turns on the env's action fee ($X per action that does something,
+    like gas; default 0 = off = exactly v4). The run name gets _feeX at the
+    end, e.g. cs_only_seed42_env4_fee0.05, so the v4 runs are never touched.
+  - controllable_gain now subtracts the fee (it is real money). With
+    --fee 0 the number is the same as before.
 
 What changed in v4 (6 Nov, env v4):
   - INFO-ONLY ABLATION: the replay boost (PER x3 for high-risk moments) now
@@ -27,10 +34,10 @@ Variants:
     python training_loop.py --no-cs            -> r_only
     python training_loop.py --no-r             -> cs_only
     python training_loop.py --no-r --no-cs     -> none
-    add --seed N (default 42), --episodes N, --tag NAME
+    add --seed N (default 42), --episodes N, --tag NAME, --fee X
 
 Usage:
-    python training_loop.py [--no-r] [--no-cs] [--seed N] [--episodes N] [--tag env4]
+    python training_loop.py [--no-r] [--no-cs] [--seed N] [--episodes N] [--tag env4] [--fee 0.05]
 """
 
 import argparse
@@ -88,6 +95,7 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
     proactive_steps = 0
     invalid_steps = 0
     danger_days = 0
+    action_steps = 0          # v4.1: steps where an action (not hold) really happened
     controllable_gain = 0.0
     liq_count = 0
     end_net_worth = start_net_worth
@@ -106,8 +114,9 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
 
         episode_rewards.append(reward)
         invalid_steps += int(info["invalid_action"])
+        action_steps += int(action != HOLD_ACTION and not info["invalid_action"])
         danger_days += int(info["health_factor"] < HF_BUFFER)
-        controllable_gain += info["interest_usd"] + info["liquidation_loss_usd"]
+        controllable_gain += info["interest_usd"] + info["liquidation_loss_usd"] - info.get("fee_usd", 0.0)
         if r_before > SAFE_RISK_THRESHOLD:
             elevated_risk_steps += 1
             if is_de_risking_action(action) and not info["invalid_action"]:
@@ -131,6 +140,8 @@ def run_episode(env: LendingEnv, agent: DQNAgent, train: bool = True) -> dict:
         "risk_adjusted_return": end_net_worth / (1 + liq_count),
         "proactive_response_rate": (proactive_steps / elevated_risk_steps) if elevated_risk_steps > 0 else None,
         "invalid_action_rate": invalid_steps / n,
+        "action_rate": action_steps / n,
+        "fees_paid": info.get("fees_paid_usd", 0.0),
         "danger_days_share": danger_days / n,
         "high_risk_share": elevated_risk_steps / n,
         "credit_score": env.credit_score,
@@ -148,6 +159,8 @@ def parse_args():
     p.add_argument("--tag", default="env4", help="added to the run name (default env4)")
     p.add_argument("--buffer-penalty", type=float, default=0.0,
                    help="HF danger-zone penalty per day at HF 1.05 (0 = off)")
+    p.add_argument("--fee", type=float, default=0.0,
+                   help="v4.1: $ fee per action that does something, like gas (0 = off)")
     return p.parse_args()
 
 
@@ -159,6 +172,8 @@ def main():
         run_name += f"_{args.tag}"
     if args.buffer_penalty > 0:
         run_name += f"_buf{args.buffer_penalty:g}"
+    if args.fee > 0:
+        run_name += f"_fee{args.fee:g}"
 
     run_ckpt_dir = os.path.join(CHECKPOINT_DIR, run_name)
     if os.path.exists(os.path.join(run_ckpt_dir, "final.pt")):
@@ -168,10 +183,10 @@ def main():
 
     print(f"=== Training run: {run_name} (R={'on' if use_r else 'off'}, "
           f"CS={'on' if use_cs else 'off'}, buffer_penalty={args.buffer_penalty:g}, "
-          f"episodes={args.episodes}, split=train) ===")
+          f"fee=${args.fee:g}, episodes={args.episodes}, split=train) ===")
 
     env = LendingEnv(seed=args.seed, use_risk_signal=use_r, use_credit_score=use_cs, split="train",
-                     buffer_penalty=args.buffer_penalty)
+                     buffer_penalty=args.buffer_penalty, action_fee=args.fee)
     agent = DQNAgent(obs_dim=env.observation_space.shape[0], n_actions=env.action_space.n, seed=args.seed)
 
     log_rows = []
@@ -188,6 +203,7 @@ def main():
                   f"liq_rate={np.mean([r['liquidated'] for r in recent]):.2f} | "
                   f"ctrl_gain={np.mean([r['controllable_gain'] for r in recent]):6.2f} | "
                   f"proactive={np.mean(proactive_vals) if proactive_vals else float('nan'):.2f} | "
+                  f"act_rate={np.mean([r['action_rate'] for r in recent]):.2f} | "
                   f"high_risk={np.mean([r['high_risk_share'] for r in recent]):.2f} | "
                   f"invalid={np.mean([r['invalid_action_rate'] for r in recent]):.2f}")
 
@@ -211,6 +227,8 @@ def main():
     print(f"  avg controllable gain: {last['controllable_gain'].mean():.2f}")
     print(f"  avg risk-adj. return:  {last['risk_adjusted_return'].mean():.2f}")
     print(f"  avg proactive rate:    {last['proactive_response_rate'].dropna().mean():.3f}")
+    print(f"  avg action rate:       {last['action_rate'].mean():.3f}  (share of days with a real action)")
+    print(f"  avg fees paid:         {last['fees_paid'].mean():.2f}")
     print(f"  avg invalid rate:      {last['invalid_action_rate'].mean():.3f}")
     print(f"  high-risk days (R>{SAFE_RISK_THRESHOLD:.0%}): {last['high_risk_share'].mean():.3f}")
     print(f"  danger days (HF<{HF_BUFFER}):  {last['danger_days_share'].mean():.3f}")

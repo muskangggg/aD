@@ -1,0 +1,68 @@
+=== Training run: none_seed1_env4_fee0.05 (R=off, CS=off, buffer_penalty=0, fee=$0.05, episodes=1000, split=train) ===
+ep   20 | eps=0.917 | target=off | avg_reward= -44.208 | liq_rate=0.10 | ctrl_gain= -3.92 | proactive=0.78 | act_rate=0.85 | high_risk=0.04 | invalid=0.00
+ep   40 | eps=0.832 | target=off | avg_reward= -30.587 | liq_rate=0.10 | ctrl_gain= -2.56 | proactive=0.77 | act_rate=0.87 | high_risk=0.03 | invalid=0.00
+ep   60 | eps=0.746 | target=off | avg_reward= -21.483 | liq_rate=0.00 | ctrl_gain= -2.15 | proactive=0.75 | act_rate=0.89 | high_risk=0.01 | invalid=0.00
+ep   80 | eps=0.661 | target=off | avg_reward= -27.483 | liq_rate=0.05 | ctrl_gain= -2.50 | proactive=0.77 | act_rate=0.82 | high_risk=0.01 | invalid=0.00
+ep  100 | eps=0.575 | target=off | avg_reward=  -4.888 | liq_rate=0.00 | ctrl_gain= -0.49 | proactive=0.97 | act_rate=0.78 | high_risk=0.01 | invalid=0.00
+ep  120 | eps=0.490 | target=off | avg_reward=   3.678 | liq_rate=0.00 | ctrl_gain=  0.37 | proactive=0.93 | act_rate=0.71 | high_risk=0.02 | invalid=0.00
+ep  140 | eps=0.404 | target=off | avg_reward=  -5.488 | liq_rate=0.00 | ctrl_gain= -0.55 | proactive=0.94 | act_rate=0.66 | high_risk=0.01 | invalid=0.00
+ep  160 | eps=0.319 | target=off | avg_reward=  -8.080 | liq_rate=0.00 | ctrl_gain= -0.81 | proactive=0.89 | act_rate=0.63 | high_risk=0.01 | invalid=0.00
+[DQNAgent] epsilon=0.300 < 0.3 -> target network activated
+ep  180 | eps=0.233 | target=on  | avg_reward= -42.956 | liq_rate=0.00 | ctrl_gain= -4.30 | proactive=0.44 | act_rate=0.49 | high_risk=0.00 | invalid=0.00
+ep  200 | eps=0.148 | target=on  | avg_reward= -46.693 | liq_rate=0.05 | ctrl_gain= -4.42 | proactive=0.77 | act_rate=0.49 | high_risk=0.02 | invalid=0.00
+ep  220 | eps=0.062 | target=on  | avg_reward= -97.610 | liq_rate=0.10 | ctrl_gain= -8.51 | proactive=0.60 | act_rate=0.52 | high_risk=0.05 | invalid=0.00
+ep  240 | eps=0.050 | target=on  | avg_reward=  10.463 | liq_rate=0.00 | ctrl_gain=  1.05 | proactive=nan | act_rate=0.33 | high_risk=0.00 | invalid=0.00
+ep  260 | eps=0.050 | target=on  | avg_reward=   5.239 | liq_rate=0.00 | ctrl_gain=  0.52 | proactive=0.95 | act_rate=0.32 | high_risk=0.01 | invalid=0.00
+ep  280 | eps=0.050 | target=on  | avg_reward=  19.435 | liq_rate=0.00 | ctrl_gain=  1.94 | proactive=0.48 | act_rate=0.19 | high_risk=0.02 | invalid=0.00
+ep  300 | eps=0.050 | target=on  | avg_reward=  -7.740 | liq_rate=0.05 | ctrl_gain= -0.52 | proactive=0.92 | act_rate=0.32 | high_risk=0.01 | invalid=0.00
+ep  320 | eps=0.050 | target=on  | avg_reward= -13.307 | liq_rate=0.05 | ctrl_gain= -0.83 | proactive=0.60 | act_rate=0.47 | high_risk=0.04 | invalid=0.00
+ep  340 | eps=0.050 | target=on  | avg_reward=   5.267 | liq_rate=0.00 | ctrl_gain=  0.53 | proactive=1.00 | act_rate=0.40 | high_risk=0.00 | invalid=0.00
+ep  360 | eps=0.050 | target=on  | avg_reward=  12.229 | liq_rate=0.00 | ctrl_gain=  1.22 | proactive=0.50 | act_rate=0.55 | high_risk=0.00 | invalid=0.00
+ep  380 | eps=0.050 | target=on  | avg_reward=  13.596 | liq_rate=0.00 | ctrl_gain=  1.36 | proactive=1.00 | act_rate=0.48 | high_risk=0.00 | invalid=0.00
+ep  400 | eps=0.050 | target=on  | avg_reward=  10.031 | liq_rate=0.05 | ctrl_gain=  1.25 | proactive=0.64 | act_rate=0.43 | high_risk=0.01 | invalid=0.00
+ep  420 | eps=0.050 | target=on  | avg_reward= -27.129 | liq_rate=0.05 | ctrl_gain= -2.46 | proactive=0.79 | act_rate=0.39 | high_risk=0.01 | invalid=0.00
+ep  440 | eps=0.050 | target=on  | avg_reward=   2.830 | liq_rate=0.00 | ctrl_gain=  0.28 | proactive=0.77 | act_rate=0.33 | high_risk=0.01 | invalid=0.00
+ep  460 | eps=0.050 | target=on  | avg_reward= -23.810 | liq_rate=0.10 | ctrl_gain= -1.88 | proactive=0.55 | act_rate=0.36 | high_risk=0.03 | invalid=0.00
+ep  480 | eps=0.050 | target=on  | avg_reward= -15.137 | liq_rate=0.00 | ctrl_gain= -1.51 | proactive=0.95 | act_rate=0.42 | high_risk=0.01 | invalid=0.00
+ep  500 | eps=0.050 | target=on  | avg_reward= -23.945 | liq_rate=0.00 | ctrl_gain= -2.39 | proactive=0.72 | act_rate=0.49 | high_risk=0.04 | invalid=0.00
+ep  520 | eps=0.050 | target=on  | avg_reward=   2.317 | liq_rate=0.00 | ctrl_gain=  0.23 | proactive=0.88 | act_rate=0.49 | high_risk=0.01 | invalid=0.00
+ep  540 | eps=0.050 | target=on  | avg_reward=  -7.452 | liq_rate=0.00 | ctrl_gain= -0.75 | proactive=1.00 | act_rate=0.49 | high_risk=0.01 | invalid=0.00
+ep  560 | eps=0.050 | target=on  | avg_reward=   3.828 | liq_rate=0.00 | ctrl_gain=  0.38 | proactive=0.99 | act_rate=0.57 | high_risk=0.02 | invalid=0.00
+ep  580 | eps=0.050 | target=on  | avg_reward=  10.074 | liq_rate=0.00 | ctrl_gain=  1.01 | proactive=0.85 | act_rate=0.48 | high_risk=0.02 | invalid=0.00
+ep  600 | eps=0.050 | target=on  | avg_reward=   4.471 | liq_rate=0.00 | ctrl_gain=  0.45 | proactive=0.96 | act_rate=0.49 | high_risk=0.02 | invalid=0.00
+ep  620 | eps=0.050 | target=on  | avg_reward=  11.725 | liq_rate=0.05 | ctrl_gain=  1.42 | proactive=1.00 | act_rate=0.36 | high_risk=0.01 | invalid=0.00
+ep  640 | eps=0.050 | target=on  | avg_reward=  25.770 | liq_rate=0.00 | ctrl_gain=  2.58 | proactive=0.83 | act_rate=0.31 | high_risk=0.00 | invalid=0.00
+ep  660 | eps=0.050 | target=on  | avg_reward=  24.931 | liq_rate=0.00 | ctrl_gain=  2.49 | proactive=nan | act_rate=0.37 | high_risk=0.00 | invalid=0.00
+ep  680 | eps=0.050 | target=on  | avg_reward=  25.633 | liq_rate=0.00 | ctrl_gain=  2.56 | proactive=0.00 | act_rate=0.37 | high_risk=0.00 | invalid=0.00
+ep  700 | eps=0.050 | target=on  | avg_reward=  11.951 | liq_rate=0.00 | ctrl_gain=  1.20 | proactive=0.78 | act_rate=0.51 | high_risk=0.00 | invalid=0.00
+ep  720 | eps=0.050 | target=on  | avg_reward=  14.529 | liq_rate=0.00 | ctrl_gain=  1.45 | proactive=0.88 | act_rate=0.55 | high_risk=0.01 | invalid=0.00
+ep  740 | eps=0.050 | target=on  | avg_reward=  15.482 | liq_rate=0.00 | ctrl_gain=  1.55 | proactive=1.00 | act_rate=0.40 | high_risk=0.00 | invalid=0.00
+ep  760 | eps=0.050 | target=on  | avg_reward=  16.466 | liq_rate=0.00 | ctrl_gain=  1.65 | proactive=0.85 | act_rate=0.40 | high_risk=0.03 | invalid=0.00
+ep  780 | eps=0.050 | target=on  | avg_reward=  15.907 | liq_rate=0.00 | ctrl_gain=  1.59 | proactive=0.88 | act_rate=0.43 | high_risk=0.02 | invalid=0.00
+ep  800 | eps=0.050 | target=on  | avg_reward=   1.455 | liq_rate=0.05 | ctrl_gain=  0.40 | proactive=0.92 | act_rate=0.43 | high_risk=0.01 | invalid=0.00
+ep  820 | eps=0.050 | target=on  | avg_reward=  11.107 | liq_rate=0.00 | ctrl_gain=  1.11 | proactive=1.00 | act_rate=0.43 | high_risk=0.00 | invalid=0.00
+ep  840 | eps=0.050 | target=on  | avg_reward=  11.160 | liq_rate=0.00 | ctrl_gain=  1.12 | proactive=nan | act_rate=0.46 | high_risk=0.00 | invalid=0.00
+ep  860 | eps=0.050 | target=on  | avg_reward=  13.702 | liq_rate=0.00 | ctrl_gain=  1.37 | proactive=1.00 | act_rate=0.41 | high_risk=0.00 | invalid=0.00
+ep  880 | eps=0.050 | target=on  | avg_reward=  13.732 | liq_rate=0.00 | ctrl_gain=  1.37 | proactive=0.91 | act_rate=0.42 | high_risk=0.01 | invalid=0.00
+ep  900 | eps=0.050 | target=on  | avg_reward= -11.029 | liq_rate=0.05 | ctrl_gain= -0.85 | proactive=0.64 | act_rate=0.43 | high_risk=0.01 | invalid=0.00
+ep  920 | eps=0.050 | target=on  | avg_reward=  13.441 | liq_rate=0.00 | ctrl_gain=  1.34 | proactive=1.00 | act_rate=0.43 | high_risk=0.00 | invalid=0.00
+ep  940 | eps=0.050 | target=on  | avg_reward=  31.490 | liq_rate=0.00 | ctrl_gain=  3.15 | proactive=0.79 | act_rate=0.38 | high_risk=0.01 | invalid=0.00
+ep  960 | eps=0.050 | target=on  | avg_reward=  14.299 | liq_rate=0.00 | ctrl_gain=  1.43 | proactive=1.00 | act_rate=0.46 | high_risk=0.01 | invalid=0.00
+ep  980 | eps=0.050 | target=on  | avg_reward=  21.140 | liq_rate=0.00 | ctrl_gain=  2.11 | proactive=0.90 | act_rate=0.37 | high_risk=0.01 | invalid=0.00
+ep 1000 | eps=0.050 | target=on  | avg_reward=  27.631 | liq_rate=0.00 | ctrl_gain=  2.76 | proactive=0.89 | act_rate=0.34 | high_risk=0.01 | invalid=0.00
+
+Saved log: C:\Users\user\OneDrive\Desktop\auto_defi\logs\none_seed1_env4_fee0.05.csv
+Final checkpoint: C:\Users\user\OneDrive\Desktop\auto_defi\checkpoints\none_seed1_env4_fee0.05\final.pt
+
+Last 100 episodes (TRAIN):
+  liquidation rate:      0.000
+  avg reward:            21.600
+  avg net wealth change: 94.40
+  avg controllable gain: 2.16
+  avg risk-adj. return:  1094.40
+  avg proactive rate:    0.902
+  avg action rate:       0.395  (share of days with a real action)
+  avg fees paid:         1.78
+  avg invalid rate:      0.000
+  high-risk days (R>5%): 0.007
+  danger days (HF<1.15):  0.048
