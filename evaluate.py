@@ -1,5 +1,5 @@
 """
-evaluate.py  (v3.3 -- env v4.1: CS-based rates, new R, stress split, action counts, action fee)
+evaluate.py  (v3.5 -- env v4.1: CS-based rates, new R, stress split, action counts, fee, R shield with memory)
 
 Runs every strategy on the SAME price paths (same seed -> same paths and
 same credit scores for everyone, because actions never use the env's random
@@ -29,6 +29,32 @@ What changed in v3 (6 Nov, env v4):
     the fees; new column "fees" in TABLE 2. Output files get _feeX in the
     name, so the fee-free results are never overwritten.
     Compare fee-trained agents with the baselines in the SAME fee world.
+  - v3.4 (19 Nov): --shield X = R SAFETY SHIELD, a rule on top of every
+    strategy (no retraining). When the TRUE R (chance of liquidation within
+    5 days) is above X before acting, borrow and withdraw (both assets) are
+    blocked. DQN agents then pick their best remaining action (the shield
+    removes those actions from the mask); hand-made rules fall back to hold.
+    Why: diagnose_r.py v1.1 (STRESS) showed that R agents DO react to a
+    warning but then UNDO it (r_only: 83% of warned liquidations had both a
+    repay/deposit AND a borrow/withdraw in the warning window; debt did not
+    go down). Example: a parent who takes the car keys away when the storm
+    warning is on -- you can still drive home slowly, just not race.
+    The shield uses the TRUE R for every strategy (also agents that cannot
+    see R), so it is a RULE, not something the agent learned. Report it so.
+    New column in TABLE 1: shielded = share of steps where the shield was
+    ON (R > X, borrow/withdraw blocked). Output files get _shieldX in the name.
+  - v3.5 (20 Nov): SHIELD WITH MEMORY. The v3.4 shield (R > 5%) failed its
+    rule (STRESS liquidations only -10% to -22%). Likely reason: the agent
+    repays a little, R drops just under 5%, the shield switches off and the
+    agent borrows again (a see-saw around the line). Now:
+        --shield X       : shield turns ON when R > X (as before)
+        --shield-off Y   : ...and only turns OFF when R < Y        (e.g. 0.01)
+        --shield-days N  : ...AND at least N days have passed since R was
+                           last above X                            (e.g. 5)
+    Example: after a storm warning the parent keeps the car keys until the
+    sky is really clear (R < 1%) AND the warning is 5 days old -- not the
+    moment the rain stops. Defaults (no --shield-off, --shield-days 0) give
+    exactly the v3.4 shield. Output files get _offY_dN in the name.
 
 Strategies:
   - static       : never rebalances
@@ -48,6 +74,8 @@ Usage:
     python evaluate.py --runs ... --split stress --episodes 300
     python evaluate.py --runs ... --split test          # FINAL results only, run once
     python evaluate.py --runs cs_only_seed42_env4_fee0.05 --fee 0.05   # fee world
+    python evaluate.py --runs ... --split stress --shield 0.05          # R shield on top
+    python evaluate.py --runs ... --split stress --shield 0.05 --shield-off 0.01 --shield-days 5   # with memory
 Per-episode results are saved to results/eval_<split>_seed<seed>.csv
 """
 
@@ -90,6 +118,18 @@ def action_name(action: int) -> str:
 ACTION_NAMES = [action_name(a) for a in range(HOLD_ACTION + 1)]
 
 
+RE_RISKING = {"borrow", "withdraw"}
+
+
+def shield_mask(mask: np.ndarray) -> np.ndarray:
+    """v3.4: the shield is ON -> block borrow / withdraw (both assets)."""
+    m = mask.copy()
+    for a in range(len(m)):
+        if a != HOLD_ACTION and ACTION_TYPES[a % len(ACTION_TYPES)] in RE_RISKING:
+            m[a] = False
+    return m
+
+
 def is_de_risking(action: int) -> bool:
     return action != HOLD_ACTION and ACTION_TYPES[action % len(ACTION_TYPES)] in DE_RISKING
 
@@ -126,21 +166,37 @@ def make_dqn_policy(run_name: str, n_obs: int, n_actions: int):
     return act
 
 
-def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED, fee=0.0):
+def evaluate(name, policy, use_r, use_cs, split, episodes, seed=EVAL_SEED, fee=0.0, shield=None,
+             shield_off=None, shield_days=0):
     env = EvalEnv(seed=seed, split=split, use_risk_signal=use_r, use_credit_score=use_cs, action_fee=fee)
     rows = []
     for _ in range(episodes):
         obs, info = env.reset()
         c = dict(steps=0, invalid=0, high_steps=0, high_derisk=0, normal_steps=0, normal_derisk=0,
-                 low_hf_steps=0)
+                 low_hf_steps=0, shielded=0)
         chosen = {n: 0 for n in ACTION_NAMES}          # v3.2: how often each action was picked
         valid = {n: 0 for n in ACTION_NAMES}           # ...and how often it actually did something
         ctrl = paid = earned = idle_eth = 0.0
+        shield_on, last_alarm, day = False, -10**9, 0               # v3.5: shield memory
+        off_level = shield if shield_off is None else shield_off
         done = False
         while not done:
             hf_now, r_now = risk_before_action(env)
             idle_eth += env.wallet["ETH"] * env._price("ETH")
-            a = int(policy(obs, info))
+            if shield is not None:
+                if r_now > shield:                                  # alarm: switch ON (or stay ON)
+                    shield_on, last_alarm = True, day
+                elif shield_on and r_now <= off_level and day - last_alarm >= shield_days:
+                    shield_on = False                               # sky clear AND warning old enough
+            day += 1
+            if not shield_on:
+                a = int(policy(obs, info))
+            else:                                                   # shield ON this step
+                c["shielded"] += 1
+                safe_mask = shield_mask(info["action_mask"])
+                a = int(policy(obs, {**info, "action_mask": safe_mask}))
+                if info["action_mask"][a] and not safe_mask[a]:
+                    a = HOLD_ACTION                                 # hand-made rules ignore the mask
             obs, reward, terminated, truncated, info = env.step(a)
 
             chosen[action_name(a)] += 1
@@ -193,8 +249,9 @@ def summarise(results: pd.DataFrame, order: list[str]) -> tuple[pd.DataFrame, pd
                        liq_count=("liq_count", "mean"), risk_adj=("risk_adj", "mean"),
                        ctrl_gain=("ctrl_gain", "mean")).reindex(order)
     sums = g[["steps", "invalid", "high_steps", "high_derisk", "normal_steps", "normal_derisk",
-              "low_hf_steps"]].sum().reindex(order)
+              "low_hf_steps", "shielded"]].sum().reindex(order)
     main_table["invalid"] = sums["invalid"] / sums["steps"]
+    main_table["shielded"] = sums["shielded"] / sums["steps"]
 
     behaviour = pd.DataFrame(index=order)
     behaviour.index.name = "strategy"
@@ -229,6 +286,12 @@ def main():
                    help="evaluation seed (users + price paths); use a different one for TEST, e.g. 3031")
     p.add_argument("--fee", type=float, default=0.0,
                    help="v3.3: $ fee per real action for EVERY strategy (env v4.1); 0 = off")
+    p.add_argument("--shield", type=float, default=None,
+                   help="v3.4: R shield -- block borrow/withdraw when true R > this (e.g. 0.05); off by default")
+    p.add_argument("--shield-off", type=float, default=None,
+                   help="v3.5: shield only switches OFF when R < this (e.g. 0.01); default = same as --shield")
+    p.add_argument("--shield-days", type=int, default=0,
+                   help="v3.5: ...and at least this many days after R was last above --shield (e.g. 5)")
     args = p.parse_args()
 
     rng = np.random.default_rng(0)
@@ -250,8 +313,12 @@ def main():
     if args.split == "test":
         print("!!! TEST split: use this only for the FINAL results, not for tuning !!!\n")
     print(f"=== Evaluation on {args.split.upper()} split, {args.episodes} episodes each, seed {args.seed}, "
-          f"fee ${args.fee:g} per action, same price paths for every strategy ===\n")
-    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes, args.seed, args.fee)
+          f"fee ${args.fee:g} per action, R shield {'off' if args.shield is None else f'ON at R > {args.shield:g}'}"
+          f"{'' if args.shield is None or args.shield_off is None else f', OFF at R < {args.shield_off:g}'}"
+          f"{'' if args.shield is None or not args.shield_days else f' and {args.shield_days} days after the last alarm'}, "
+          f"same price paths for every strategy ===\n")
+    results = pd.concat([evaluate(n, pol, r, cs, args.split, args.episodes, args.seed, args.fee, args.shield,
+                                  args.shield_off, args.shield_days)
                          for n, pol, r, cs in strategies], ignore_index=True)
 
     order = [s[0] for s in strategies]
@@ -261,7 +328,7 @@ def main():
     pd.set_option("display.width", 200)
     print("TABLE 1 - main results")
     print(main_table.round({"N_end": 1, "liq_rate": 3, "liq_count": 2, "risk_adj": 1,
-                            "ctrl_gain": 2, "invalid": 3}).to_string())
+                            "ctrl_gain": 2, "invalid": 3, "shielded": 3}).to_string())
     print(f"\nTABLE 2 - behaviour (high risk = R > {SAFE_RISK_THRESHOLD:.0%} chance of liquidation "
           f"within 5 days, measured before acting)")
     print(behaviour.round(3).round({"int_earned": 2, "int_paid": 2, "fees": 2, "end_debt": 0, "idle_eth": 0}).to_string())
@@ -277,6 +344,12 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     tag = f"_fee{args.fee:g}" if args.fee > 0 else ""
+    if args.shield is not None:
+        tag += f"_shield{args.shield:g}"
+        if args.shield_off is not None:
+            tag += f"_off{args.shield_off:g}"
+        if args.shield_days:
+            tag += f"_d{args.shield_days}"
     out = os.path.join(RESULTS_DIR, f"eval_{args.split}_seed{args.seed}{tag}.csv")
     results.to_csv(out, index=False)
     act_out = os.path.join(RESULTS_DIR, f"actions_{args.split}_seed{args.seed}{tag}.csv")

@@ -1,0 +1,125 @@
+=== Evaluation on STRESS split, 300 episodes each, seed 2026, fee $0 per action, R shield ON at R > 0.05, OFF at R < 0.01 and 5 days after the last alarm, same price paths for every strategy ===
+
+TABLE 1 - main results
+                     N_end  liq_rate  liq_count  risk_adj  ctrl_gain  invalid  shielded
+strategy                                                                               
+static               965.6     0.260       1.03     883.1       1.15    0.000     0.180
+heuristic            966.7     0.090       0.09     941.5       4.01    0.003     0.213
+heuristic_cs         967.2     0.043       0.04     955.8       4.91    0.002     0.108
+random               962.8     0.207       0.28     884.4      -2.02    0.175     0.157
+borrow_all           954.2     0.977       5.63     230.5     -29.90    0.836     0.790
+full_seed42_env4     963.4     0.033       0.03     954.0       3.17    0.000     0.142
+full_seed1_env4      962.5     0.077       0.10     925.0       2.93    0.000     0.172
+full_seed2_env4      965.9     0.110       0.12     924.4      -1.86    0.000     0.153
+full_seed3_env4      965.2     0.003       0.00     964.6       3.97    0.000     0.016
+full_seed4_env4      963.2     0.053       0.05     943.0       3.79    0.000     0.101
+r_only_seed42_env4   961.6     0.003       0.00     961.3       0.43    0.000     0.013
+r_only_seed1_env4    962.1     0.043       0.04     945.1       1.81    0.000     0.054
+r_only_seed2_env4    965.7     0.040       0.04     950.6       2.66    0.000     0.085
+r_only_seed3_env4    963.6     0.040       0.05     948.6       3.22    0.000     0.160
+r_only_seed4_env4    959.9     0.140       0.16     877.7      -2.97    0.000     0.214
+cs_only_seed42_env4  966.2     0.000       0.00     966.2       5.14    0.000     0.013
+cs_only_seed1_env4   966.9     0.163       0.29     886.7       0.94    0.000     0.283
+cs_only_seed2_env4   965.6     0.003       0.00     965.1       4.51    0.000     0.017
+cs_only_seed3_env4   965.6     0.003       0.00     963.1       4.32    0.000     0.072
+cs_only_seed4_env4   964.8     0.003       0.00     963.3       4.55    0.000     0.049
+none_seed42_env4     963.6     0.000       0.00     963.6       2.49    0.000     0.019
+none_seed1_env4      951.2     0.067       0.07     938.3     -10.72    0.000     0.071
+none_seed2_env4      966.1     0.020       0.06     959.7       4.20    0.000     0.050
+none_seed3_env4      963.7     0.077       0.08     930.4       2.50    0.000     0.148
+none_seed4_env4      965.2     0.050       0.11     954.7       4.27    0.000     0.064
+
+TABLE 2 - behaviour (high risk = R > 5% chance of liquidation within 5 days, measured before acting)
+                     proactive  normal  pro_gap  high_risk  hf_lt_1.1  int_earned  int_paid  fees  end_debt  idle_eth
+strategy                                                                                                             
+static                   0.000   0.000    0.000      0.139      0.033        9.63      4.44   0.0     320.0       0.0
+heuristic                0.190   0.000    0.190      0.099      0.004       11.00      5.87   0.0     472.0       0.0
+heuristic_cs             0.192   0.030    0.162      0.050      0.002        7.87      2.45   0.0     222.0       0.0
+random                   0.367   0.353    0.014      0.064      0.040        7.88      5.94   0.0     551.0     198.0
+borrow_all               0.000   0.000    0.000      0.618      0.240       11.31      3.83   0.0     121.0       0.0
+full_seed42_env4         0.727   0.099    0.628      0.043      0.005       11.35      7.60   0.0     687.0       7.0
+full_seed1_env4          0.831   0.364    0.468      0.053      0.007        9.55      5.06   0.0     398.0      83.0
+full_seed2_env4          0.674   0.357    0.317      0.046      0.052        8.95      8.21   0.0     693.0     215.0
+full_seed3_env4          0.908   0.296    0.613      0.004      0.000        6.71      2.72   0.0     159.0     188.0
+full_seed4_env4          0.606   0.113    0.493      0.030      0.002        9.72      5.23   0.0     429.0      52.0
+r_only_seed42_env4       0.359   0.187    0.172      0.005      0.007        6.08      5.56   0.0     567.0     244.0
+r_only_seed1_env4        0.756   0.318    0.439      0.014      0.008        7.59      5.17   0.0     398.0      51.0
+r_only_seed2_env4        0.880   0.417    0.462      0.022      0.008        6.12      2.78   0.0     249.0     233.0
+r_only_seed3_env4        0.928   0.109    0.819      0.045      0.003       10.35      6.41   0.0     502.0      44.0
+r_only_seed4_env4        0.711   0.381    0.330      0.065      0.023       10.83      9.25   0.0     862.0      65.0
+cs_only_seed42_env4      0.905   0.371    0.534      0.004      0.000        6.13      1.00   0.0      77.0       1.0
+cs_only_seed1_env4       0.493   0.271    0.222      0.106      0.022       11.47      6.45   0.0     504.0       7.0
+cs_only_seed2_env4       0.473   0.433    0.040      0.006      0.001        6.56      2.03   0.0     193.0      38.0
+cs_only_seed3_env4       0.812   0.406    0.405      0.019      0.001       10.04      5.57   0.0     515.0       7.0
+cs_only_seed4_env4       0.935   0.344    0.591      0.011      0.000        9.35      4.74   0.0     376.0      28.0
+none_seed42_env4         0.745   0.457    0.288      0.006      0.002        8.85      6.36   0.0     538.0      37.0
+none_seed1_env4          0.317   0.389   -0.072      0.029      0.406       14.65     22.48   0.0    2547.0      37.0
+none_seed2_env4          0.517   0.061    0.456      0.018      0.003        9.30      4.74   0.0     386.0       5.0
+none_seed3_env4          0.950   0.363    0.586      0.037      0.005       10.65      6.59   0.0     565.0      51.0
+none_seed4_env4          0.085   0.033    0.053      0.039      0.006        9.03      4.24   0.0     324.0      14.0
+
+How to read: pro_gap > 0 means it de-risks MORE when risk is high (real reaction to risk).
+ctrl_gain = int_earned - int_paid - fees + liquidation loss.
+
+TABLE 3 - action frequency (% of all steps the action was CHOSEN; each row sums to 100)
+                     deposit_ETH  withdraw_ETH  borrow_ETH  repay_ETH  deposit_USDC  withdraw_USDC  borrow_USDC  repay_USDC   hold
+strategy                                                                                                                          
+static                       0.0           0.0         0.0        0.0           0.0            0.0          0.0         0.0  100.0
+heuristic                    0.0           0.0         0.0        0.0           0.0            0.0          3.2         1.9   94.9
+heuristic_cs                 0.0           0.0         0.0        0.0           0.0            0.0          1.6         3.9   94.5
+random                      11.2           9.9        10.2       11.2          11.2           10.0         10.1        11.1   15.0
+borrow_all                   0.0           0.0         0.0        0.0           0.0            0.0         89.7         0.0   10.3
+full_seed42_env4             1.0           0.9         0.0        0.0           4.8            2.0         10.0         6.8   74.4
+full_seed1_env4             20.7          19.8         2.3        2.7           5.1            6.5          9.4        10.4   23.2
+full_seed2_env4              6.3           3.8        14.8       11.5          12.4           14.3          5.2         7.0   24.8
+full_seed3_env4             19.9          21.6         0.3        0.4           5.0            6.6          1.0         4.5   40.6
+full_seed4_env4              1.5           2.1         0.5        0.3           7.8            8.6          3.0         3.1   73.1
+r_only_seed42_env4          10.1          14.1         0.0        0.0           8.7            0.0          1.8         0.0   65.2
+r_only_seed1_env4            5.7           4.2         4.6        3.8          21.0           16.8          0.6         1.9   41.4
+r_only_seed2_env4            7.4          10.3         1.1        0.7           4.2            3.0         21.3        30.3   21.5
+r_only_seed3_env4            5.2           4.9         1.3        1.3           5.5            5.4          3.7         2.6   70.1
+r_only_seed4_env4            6.8           5.5         3.3        4.6          12.6            5.8         21.4        16.2   23.7
+cs_only_seed42_env4          1.2           0.8         0.2        0.3           9.2            9.0         14.4        26.7   38.3
+cs_only_seed1_env4           1.1           0.7         0.7        0.5           1.4            1.2         28.2        26.5   39.9
+cs_only_seed2_env4          36.7          24.3         1.8        1.1           0.1            0.1          2.0         5.5   28.4
+cs_only_seed3_env4           1.6           1.5         0.2        0.2           3.4            1.6         37.1        36.2   18.2
+cs_only_seed4_env4          11.7           8.7         1.7        1.6           5.5            6.0         15.8        16.3   32.8
+none_seed42_env4             0.8           0.9        14.0       20.4          11.0            4.4         14.6        13.7   20.3
+none_seed1_env4             21.6           0.0        16.5        0.1          16.6            1.8          8.8         0.4   34.1
+none_seed2_env4              1.1           0.0         2.7        2.4           2.6            3.2          0.0         0.8   87.2
+none_seed3_env4             12.5           9.9         6.7        9.9           3.0            2.8         13.9        13.2   28.2
+none_seed4_env4              1.9           1.9         0.0        0.0           0.7            0.2          0.0         0.8   94.4
+
+TABLE 3b - % of all steps the action was chosen AND did something (valid)
+                     deposit_ETH  withdraw_ETH  borrow_ETH  repay_ETH  deposit_USDC  withdraw_USDC  borrow_USDC  repay_USDC   hold
+strategy                                                                                                                          
+static                       0.0           0.0         0.0        0.0           0.0            0.0          0.0         0.0  100.0
+heuristic                    0.0           0.0         0.0        0.0           0.0            0.0          2.9         1.9   94.9
+heuristic_cs                 0.0           0.0         0.0        0.0           0.0            0.0          1.4         3.9   94.5
+random                       9.0           8.6         8.2        6.8           9.9            6.9          8.4         9.6   15.0
+borrow_all                   0.0           0.0         0.0        0.0           0.0            0.0          6.2         0.0   10.3
+full_seed42_env4             1.0           0.9         0.0        0.0           4.8            2.0         10.0         6.8   74.4
+full_seed1_env4             20.7          19.8         2.3        2.7           5.1            6.5          9.4        10.4   23.2
+full_seed2_env4              6.3           3.8        14.8       11.5          12.4           14.3          5.2         7.0   24.8
+full_seed3_env4             19.9          21.6         0.3        0.4           5.0            6.6          1.0         4.5   40.6
+full_seed4_env4              1.5           2.1         0.5        0.3           7.8            8.6          3.0         3.1   73.1
+r_only_seed42_env4          10.1          14.1         0.0        0.0           8.7            0.0          1.8         0.0   65.2
+r_only_seed1_env4            5.7           4.2         4.6        3.8          21.0           16.8          0.6         1.9   41.4
+r_only_seed2_env4            7.4          10.3         1.1        0.7           4.2            3.0         21.3        30.3   21.5
+r_only_seed3_env4            5.2           4.9         1.3        1.3           5.5            5.4          3.7         2.6   70.1
+r_only_seed4_env4            6.8           5.5         3.3        4.6          12.6            5.8         21.4        16.2   23.7
+cs_only_seed42_env4          1.2           0.8         0.2        0.3           9.2            9.0         14.4        26.7   38.3
+cs_only_seed1_env4           1.1           0.7         0.7        0.5           1.4            1.2         28.2        26.5   39.9
+cs_only_seed2_env4          36.7          24.3         1.8        1.1           0.1            0.1          2.0         5.5   28.4
+cs_only_seed3_env4           1.6           1.5         0.2        0.2           3.4            1.6         37.1        36.2   18.2
+cs_only_seed4_env4          11.7           8.7         1.7        1.6           5.5            6.0         15.8        16.3   32.8
+none_seed42_env4             0.8           0.9        14.0       20.4          11.0            4.4         14.6        13.7   20.3
+none_seed1_env4             21.6           0.0        16.5        0.1          16.6            1.8          8.8         0.4   34.1
+none_seed2_env4              1.1           0.0         2.7        2.4           2.6            3.2          0.0         0.8   87.2
+none_seed3_env4             12.5           9.9         6.7        9.9           3.0            2.8         13.9        13.2   28.2
+none_seed4_env4              1.9           1.9         0.0        0.0           0.7            0.2          0.0         0.8   94.4
+
+How to read: borrow_ETH should be ~0 for a trained agent (it pays interest, and borrowed ETH earns nothing in the wallet).
+
+Per-episode results saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\eval_stress_seed2026_shield0.05_off0.01_d5.csv
+Action frequency saved to C:\Users\user\OneDrive\Desktop\auto_defi\results\actions_stress_seed2026_shield0.05_off0.01_d5.csv

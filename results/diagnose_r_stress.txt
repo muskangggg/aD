@@ -1,0 +1,75 @@
+=== R diagnosis on STRESS split, 300 episodes each, seed 2026, same price paths for every strategy (no fee) ===
+
+  done: static                   liquidations = 309
+  done: heuristic                liquidations = 36
+  done: heuristic_cs             liquidations = 18
+  done: full_seed42_env4         liquidations = 11
+  done: full_seed1_env4          liquidations = 44
+  done: full_seed2_env4          liquidations = 50
+  done: full_seed3_env4          liquidations = 1
+  done: full_seed4_env4          liquidations = 23
+  done: r_only_seed42_env4       liquidations = 1
+  done: r_only_seed1_env4        liquidations = 19
+  done: r_only_seed2_env4        liquidations = 20
+  done: r_only_seed3_env4        liquidations = 70
+  done: r_only_seed4_env4        liquidations = 75
+  done: cs_only_seed42_env4      liquidations = 1
+  done: cs_only_seed1_env4       liquidations = 106
+  done: cs_only_seed2_env4       liquidations = 4
+  done: cs_only_seed3_env4       liquidations = 6
+  done: cs_only_seed4_env4       liquidations = 2
+  done: none_seed42_env4         liquidations = 1
+  done: none_seed1_env4          liquidations = 22
+  done: none_seed2_env4          liquidations = 26
+  done: none_seed3_env4          liquidations = 25
+  done: none_seed4_env4          liquidations = 29
+
+TABLE 1 - FIRST liquidation of each episode, by cause, per run (300 episodes, mean over seeds); all_liqs = every liquidation incl. repeats
+cause         episodes_liq  all_liqs  crash_no_warning  quiet_slide  warned_ignored  warned_too_slow
+group                                                                                               
+static                78.0     309.0               2.0          0.0            76.0              0.0
+heuristic             31.0      36.0               8.0          0.0            15.0              8.0
+heuristic_cs          15.0      18.0               4.0          0.0             5.0              6.0
+full                  21.2      25.8               9.0          0.0             2.2             10.0
+r_only                30.0      37.0               9.6          0.4             1.0             19.0
+cs_only               15.0      23.8               8.4          0.0             0.6              6.0
+none                  14.0      20.6               4.0          0.0             7.0              3.0
+
+TABLE 1b - share of each group's liquidations by cause (%)
+cause         crash_no_warning  quiet_slide  warned_ignored  warned_too_slow
+group                                                                       
+static                     3.0          0.0            97.0              0.0
+heuristic                 26.0          0.0            48.0             26.0
+heuristic_cs              27.0          0.0            33.0             40.0
+full                      42.0          0.0            10.0             47.0
+r_only                    32.0          1.0             3.0             63.0
+cs_only                   56.0          0.0             4.0             40.0
+none                      29.0          0.0            50.0             21.0
+  crash_no_warning: R could not help | quiet_slide: R missed it | warned_ignored: agent did nothing | warned_too_slow: reacted, not enough
+
+TABLE 2 - warned liquidations (medians): warning days vs $100 repays needed to get R < 5%
+                n  warning_days  derisk_actions  repays_needed  wallet_usdc  needed>days_%
+group                                                                                     
+static         76           6.0             0.0            0.6        402.7            3.9
+heuristic      23           4.0             0.0            0.3        500.8            4.3
+heuristic_cs   11           4.0             1.0            0.4        500.8            9.1
+full           61           4.0             2.0            0.4        602.5            8.2
+r_only        100           5.0             2.0            0.5        604.6            0.0
+cs_only        33           5.0             2.0            0.3        700.6            3.0
+none           50           4.5             0.0            0.3        302.0            0.0
+  needed > warning days -> even a perfect agent could not get safe with $100 per day.
+  wallet_usdc < repays_needed x 100 -> not even enough cash in the wallet to repay.
+
+TABLE 3 - calm vs stormy days (synthetic paths only), mean over all days
+              avg_hf_calm  avg_hf_storm  avg_R_calm  avg_R_storm  high_R_days_calm  high_R_days_storm  derisk_rate_calm  derisk_rate_storm
+group                                                                                                                                     
+static              2.026         2.029       0.048        0.054             0.136              0.146             0.000              0.000
+heuristic           1.622         1.635       0.019        0.031             0.088              0.137             0.017              0.032
+heuristic_cs        3.411         3.201       0.009        0.017             0.043              0.073             0.015              0.096
+full                2.272         2.178       0.010        0.016             0.042              0.065             0.264              0.283
+r_only              2.274         2.159       0.011        0.019             0.045              0.070             0.301              0.347
+cs_only             2.860         2.759       0.008        0.014             0.030              0.056             0.368              0.401
+none                1.820         1.821       0.007        0.011             0.024              0.043             0.275              0.288
+  R agents closer to the edge = lower avg_hf_storm / higher high_R_days_storm than cs_only / none.
+
+Saved C:\Users\user\OneDrive\Desktop\auto_defi\results\diagnose_r_stress_seed2026_events.csv (one row per liquidation)
